@@ -1,0 +1,12 @@
+# Example config.yaml
+model_name: Qwen/Qwen2.5-1.5B-Instruct
+dataset_version: v1.0
+template: qwen
+cutoff_len: 2048
+max_samples: 1000
+batch_size: 1
+gradient_accumulation_steps: 2
+learning_rate: "0.00002"
+num_epochs: 3.0
+adapter_path: null
+tracking_backend: wandb
