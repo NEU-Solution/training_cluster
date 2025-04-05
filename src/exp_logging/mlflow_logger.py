@@ -3,6 +3,7 @@ import mlflow
 import pandas as pd
 from typing import Dict, Any, Optional, List, Union
 from .base_logger import BaseLogger
+import datetime
 
 class MLflowLogger(BaseLogger):
     """MLflow implementation of BaseLogger."""
@@ -51,6 +52,21 @@ class MLflowLogger(BaseLogger):
                     mlflow.log_param(key, value)
                     
         return active_run
+    
+
+    def auto_init_run(self, config = None):
+        project = os.getenv("MLFLOW_EXPERIMENT_NAME", "training")
+        job_type = os.getenv("MLFLOW_JOB_TYPE", "training")
+        config = config or {}
+        run_name = f"auto_run_{self.run_id}_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+        
+        self.init_run(
+            project=project,
+            job_type=job_type,
+            config=config,
+            name=run_name
+        )
+
     
     def log_metric(self, key: str, value: Union[float, int]) -> None:
         """Log a single metric to MLflow."""

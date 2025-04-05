@@ -6,6 +6,10 @@ class BaseLogger(ABC):
     """Abstract base class for experiment tracking loggers."""
     
     @abstractmethod
+    def auto_init_run(self):
+        pass
+
+    @abstractmethod
     def init_run(self, project: str, entity: str, job_type: str, config: Dict[str, Any] = None, 
                  name: Optional[str] = None) -> Any:
         """Initialize a new run."""

@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 import sys 
 sys.path.append('..')
 # Import logger and monitoring functionality
-from src.fetch_logs import monitor_training
+from src.fetch_logs import monitor_training, scrape_log, LogFetcher
 from src.exp_logging import BaseLogger, create_logger
 import logging
 
@@ -22,7 +22,9 @@ load_dotenv()
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
 class TrainingRunner:
-    def __init__(self, output_dir="saves", tracking_backend="wandb", logger=None):
+    def __init__(self, output_dir="saves", tracking_backend:str = None, logger=None):
+        
+
         self.process = None
         self.training_id = str(int(time.time()))
         self.output_dir = os.path.join(current_dir, '../LLaMA-Factory', output_dir)
@@ -30,6 +32,7 @@ class TrainingRunner:
 
         self.checkpoints_dir = ""
         self.log_file = ""
+        self.is_logger_running = False
 
         
         # Setup logging
@@ -38,19 +41,16 @@ class TrainingRunner:
         if self.logger is None:
             self.logger = create_logger(tracking_backend)
             self.logger.login()
-        
-    def start_training(self, command, training_args=None):
-        """Start the training process with the given command."""
-        # Initialize tracking run
+            self.tracking_backend = self.logger.tracking_backend
+
+    def start_logging(self, training_args=None):
+
         run_name = f"training_{self.training_id}_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
         
         # Create a config dict from training args
         config = {}
         if training_args:
             config = vars(training_args) if hasattr(training_args, '__dict__') else training_args
-        
-        # Add command to config
-        config['command'] = command
         
         # Start tracking run
         if self.logger.tracking_backend == 'wandb':
@@ -68,7 +68,20 @@ class TrainingRunner:
                 config=config,
                 name=run_name
             )
+
+        self.is_logger_running = True
         logging.info(f"Tracking run started")
+
+        
+    def start_training(self, command, training_args=None):
+        
+        # Start logging
+        if not self.is_logger_running:
+            self.start_logging(training_args)
+
+        # Log training command
+        logging.info(f"Starting training with command: {command}")
+        
         
         # Create log file for the monitor to read
         self.log_file = os.path.join(self.output_dir, "trainer_log.jsonl")
@@ -130,20 +143,27 @@ class TrainingRunner:
         signal.signal(signal.SIGINT, self.signal_handler)
         signal.signal(signal.SIGTERM, self.signal_handler)
         
-    def run_training(self, command, monitor_interval=15, **kwargs):
+    def run_training(self, command, monitor_interval=15, compress_checkpoints = False, **kwargs):
         """Run training with the given command and monitor it."""
-        self.setup_signal_handlers()
+        # self.setup_signal_handlers()
         
         try:
             training_id = self.start_training(command, kwargs.get('training_args'))
             logging.info(f"Training started with ID: {training_id}")
             logging.info(f"Logs will be tracked with {self.tracking_backend}")
             
+            fetcher = LogFetcher(
+                log_file_path=self.log_file,
+                checkpoint_dir=self.checkpoints_dir,
+                logger=self.logger
+            )
+            
+
             # Start monitoring in a separate thread
             from threading import Thread
             monitor_thread = Thread(
                 target=monitor_training,
-                args=(self.log_file, self.checkpoints_dir, self.logger, monitor_interval),
+                args=(fetcher, compress_checkpoints),
                 daemon=True
             )
             monitor_thread.start()
@@ -167,6 +187,7 @@ class TrainingRunner:
             
             # Get exit code
             exit_code = self.process.poll()
+            monitor_thread.join(timeout=monitor_interval + 5)
             
             if not self._should_stop:
                 # Training completed naturally
@@ -182,7 +203,7 @@ class TrainingRunner:
                         self.logger.log_metric("training_failed", exit_code)
             
             # Wait for monitor thread to clean up
-            monitor_thread.join(timeout=5)
+            
             
             return training_id
             
@@ -202,7 +223,14 @@ class TrainingRunner:
             raise
         
         finally:
-            # Always close the run
+
+            monitor_thread.join(timeout=monitor_interval + 5)
+            logging.info("Training process finished. Cleaning up...")
+            scrape_log(fetcher, compress_checkpoints=compress_checkpoints)
+
+            # Collect any remaining logs
+
+            # # Always close the run
             if self.logger:
                 self.logger.finish_run()
 

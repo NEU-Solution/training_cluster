@@ -7,6 +7,8 @@ import argparse
 import yaml
 from dotenv import load_dotenv
 from src.exp_logging import BaseLogger, create_logger
+import logging
+
 
 load_dotenv()
 
@@ -105,7 +107,8 @@ if __name__ == "__main__":
             logging_backend=config.tracking_backend,
             adapter_path=config.adapter_path,
         )
-    finally:
+    except KeyboardInterrupt:
+        logging.error("Training interrupted. Stopping gracefully...")
         logger.finish_run()
         
     print("Training completed.")

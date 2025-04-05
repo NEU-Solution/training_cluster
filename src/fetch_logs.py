@@ -8,9 +8,13 @@ import shutil
 import datetime
 import sys
 from typing import Dict, Any, List, Optional
+import time
 
 import logging
 logging.basicConfig(level=logging.INFO)
+
+import sys 
+sys.path.append('..')
 
 # Import logger classes
 from src.exp_logging import BaseLogger, create_logger
@@ -60,7 +64,12 @@ class LogFetcher:
     def detect_new_checkpoints(self):
         """Detect if new checkpoint files have been created."""
         if not self.checkpoint_dir or not self.checkpoint_dir.exists():
-            return None
+            logging.warning("Checkpoint directory does not exist or is not specified.")
+            return []
+        
+        # Check for new checkpoints
+        logging.info(f"Checking for new checkpoints in {self.checkpoint_dir}")
+        
             
         checkpoints = [
             cp for cp in self.checkpoint_dir.glob("checkpoint-*") 
@@ -68,19 +77,21 @@ class LogFetcher:
         ]
         
         if not checkpoints:
-            return None
+            return []
             
         # Sort by modification time (newest first)
-        checkpoints.sort(key=lambda x: x.stat().st_mtime, reverse=True)
-        newest_checkpoint = checkpoints[0]
+        checkpoints.sort(key=lambda x: x.stat().st_mtime,)
+
+        newest_checkpoints = []
+
+        for checkpoint in checkpoints:
+            if checkpoint not in self.known_checkpoints:
+                newest_checkpoints.append(checkpoint)
+                self.known_checkpoints.add(checkpoint)
+
+            return newest_checkpoints
         
-        # Check if this is actually a new checkpoint
-        if newest_checkpoint != self.last_checkpoint:
-            self.last_checkpoint = newest_checkpoint
-            self.known_checkpoints.add(newest_checkpoint)
-            return newest_checkpoint
-        
-        return None
+        return []
 
 
 def log_metrics(logger: BaseLogger, logs: List[Dict[str, Any]]):
@@ -106,7 +117,7 @@ def log_metrics(logger: BaseLogger, logs: List[Dict[str, Any]]):
         
         if metrics:
             logger.log_metrics(metrics)
-            logging.info(f"Logged metrics: {metrics} at step {step}")
+            logging.info(f"Logged metrics: {metrics}")
             
         # Log any non-numeric values as separate artifacts if needed
         for key, value in log_entry.items():
@@ -193,8 +204,22 @@ def upload_checkpoint(
         return None
 
 
-def monitor_training(log_file, checkpoint_dir, logger: BaseLogger = None, 
-                    interval: int = 15, stall_timeout: int = 600, compress_checkpoints: bool = True):
+def scrape_log(fetcher: LogFetcher, compress_checkpoints: bool = True):
+    new_logs = fetcher.fetch_new_logs()
+    if new_logs:
+        log_metrics(fetcher.logger, new_logs)
+
+    new_checkpoints = fetcher.detect_new_checkpoints()
+    for new_checkpoint in new_checkpoints:
+    
+        checkpoint_name = upload_checkpoint(
+            fetcher.logger, new_checkpoint, 
+            cloud_storage_path=None, 
+            compress=compress_checkpoints
+        )
+
+
+def monitor_training(fetcher: LogFetcher, compress_checkpoints: bool = False, interval: int = 15, stall_timeout: int = 180):
     """
     Monitor training logs and checkpoints at specified intervals.
     
@@ -206,29 +231,32 @@ def monitor_training(log_file, checkpoint_dir, logger: BaseLogger = None,
         stall_timeout: How long to wait with no changes before stopping (seconds)
         compress_checkpoints: Whether to compress checkpoints before uploading
     """
-    fetcher = LogFetcher(log_file, logger=logger, checkpoint_dir=checkpoint_dir)
+    # fetcher = LogFetcher(log_file, logger=logger, checkpoint_dir=checkpoint_dir)
     
-    last_activity_time = time.time()
+
     had_activity = False
+    logger = fetcher.logger
+    if not logger:
+        logging.warning("No logger configured, skipping monitoring")
+        return
+    
+    max_not_update = int(stall_timeout / interval)
+    not_update_count = 0
     
     try:
         while True:
-            current_time = time.time()
+            
             activity_detected = False
             
             # Fetch and process new logs
             new_logs = fetcher.fetch_new_logs()
             if new_logs:
                 log_metrics(logger, new_logs)
-                activity_detected = True
-                last_activity_time = current_time
-                if not had_activity:
-                    had_activity = True
-                    logging.info("Initial activity detected")
+                activity_detected |= True
             
             # Detect and process new checkpoints
-            new_checkpoint = fetcher.detect_new_checkpoints()
-            if new_checkpoint:
+            new_checkpoints = fetcher.detect_new_checkpoints()
+            for new_checkpoint in new_checkpoints:
                 checkpoint_name = upload_checkpoint(
                     logger, new_checkpoint, 
                     cloud_storage_path=None, 
@@ -238,26 +266,25 @@ def monitor_training(log_file, checkpoint_dir, logger: BaseLogger = None,
                     logger.log_metric("new_checkpoint", 1.0)
                     logger.update_summary("latest_checkpoint", checkpoint_name)
                 logging.info(f"New checkpoint processed: {checkpoint_name}")
-                activity_detected = True
-                last_activity_time = current_time
-
-            had_activity = activity_detected
+                activity_detected |= True
             
+            had_activity = activity_detected
+
+            if had_activity:
+                activity_detected = 0
+            else:
+                not_update_count += 1
+                logging.info(f"No updates detected for {not_update_count * interval} seconds")
             # Check for stall condition
-            if not had_activity and (current_time - last_activity_time) > stall_timeout:
-                if logger:
-                    logger.log_metric("training_stalled", 1.0)
-                    logger.update_summary("stalled_after_seconds", int(current_time - last_activity_time))
-                logging.warning(f"Training appears stalled - no activity for {stall_timeout} seconds. Stopping monitoring.")
+            
+            
+            if not_update_count >= max_not_update:
+                logging.error("Stall condition detected, stopping monitoring")
                 break
             
             # Log stall status periodically if we're getting close to timeout
-            if not had_activity and (current_time - last_activity_time) > (stall_timeout / 2):
-                inactive_time = int(current_time - last_activity_time)
-                
-                logging.warning(f"No activity detected for {inactive_time} seconds (timeout: {stall_timeout})")
-                if logger and inactive_time % 60 == 0:  # Log every minute when getting close to stalled
-                    logger.log_metric("inactive_seconds", inactive_time)
+            if not_update_count >= max_not_update // 2:
+                logging.info(f"Stall condition approaching: {not_update_count * interval} seconds without updates")
             
             
             time.sleep(interval)
@@ -282,7 +309,12 @@ if __name__ == "__main__":
     )
     
     try:
+        fetcher = LogFetcher(
+            log_file_path="../LLaMA-Factory/saves/models/lora/sft/DS0gpA/trainer_log.jsonl",
+            logger=logger,
+            checkpoint_dir="../LLaMA-Factory/saves/models/lora/sft/DS0gpA"
+        )
         # Example usage
-        monitor_training("outputs/training_log.json", "outputs/checkpoints", logger=logger)
+        monitor_training(fetcher, compress_checkpoints=False, interval=5, stall_timeout=60)
     finally:
         logger.finish_run()

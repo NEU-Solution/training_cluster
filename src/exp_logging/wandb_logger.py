@@ -3,6 +3,7 @@ import wandb
 import pandas as pd
 from typing import Dict, Any, Optional, List, Union
 from .base_logger import BaseLogger
+import datetime
 
 class WandbLogger(BaseLogger):
     """Weights & Biases implementation of BaseLogger."""
@@ -30,6 +31,23 @@ class WandbLogger(BaseLogger):
             name=name
         )
         return self.run
+    
+    def auto_init_run(self, config = None):
+        """Automatically initialize a WandB run with default parameters."""
+        project = os.getenv("WANDB_PROJECT", "training")
+        entity = os.getenv("WANDB_ENTITY", None)
+        job_type = os.getenv("WANDB_JOB_TYPE", "training")
+        config = config or {}
+
+        run_name = f"training_{self.training_id}_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+
+        return self.init_run(
+            project=project,
+            entity=self.entity,
+            job_type=job_type,
+            config=config,
+            name=run_name
+        )
     
     def log_metric(self, key: str, value: Union[float, int]) -> None:
         """Log a single metric to WandB."""

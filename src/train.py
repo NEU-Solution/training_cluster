@@ -4,8 +4,9 @@ sys.path.append('..')
 
 
 from src.collecting_data import fake_etl
-from src.preprocess import create_training_yaml
+from src.preprocess import create_training_yaml, download_model_regristry
 from src.training_cli import TrainingRunner
+from src.exp_logging import create_logger
 import random
 import string
 
@@ -19,8 +20,11 @@ def train(
     max_samples: int,
     batch_size: int,
     gradient_accumulation_steps: int,
-    learning_rate: float,
-    num_epochs: int,
+    learning_rate: str = '2.0e-5',
+    num_epochs: int = 2.0,
+    lora_name: str = None,
+    lora_version: str = None,
+    lora_hf_repo: str = None,
     logging_backend: str = "wandb",
     adapter_path: str = None,
 ):
@@ -28,8 +32,33 @@ def train(
     dataset_name = fake_etl(dataset_version)
 
     random_suffix = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
+    
+    
+    # Relative to the LLama-Factory directory
     output_dir = f"saves/models/lora/sft/{random_suffix}"
 
+    adapter_dir =f"models/lora"
+
+    logger = create_logger(logging_backend)
+
+    runner = TrainingRunner(
+        output_dir= output_dir,
+        logger=logger,
+    )
+
+    # Start logging
+    runner.start_logging()
+
+    adapter_path = None
+    if lora_name:
+        # Download LoRA weights
+        adapter_path = download_model_regristry(
+            model_name=lora_name,
+            version=lora_version,
+            download_dir=adapter_dir,
+            logger=logger,
+            hf_repo=lora_hf_repo
+        )
 
     # Create training yaml
     yaml_path = create_training_yaml(
@@ -42,20 +71,12 @@ def train(
         gradient_accumulation_steps=gradient_accumulation_steps,
         learning_rate=learning_rate,
         num_epochs=num_epochs,
-        adapter_path=adapter_path,
         output_dir=output_dir,
+        adapter_name_or_path=adapter_path,
     )
     # Create training runner
 
-    
-
-    # Create the training runner
-    runner = TrainingRunner(
-        output_dir=output_dir,
-        tracking_backend=logging_backend,
-    )
-
-    # # Start training
+    # Start training
 
     llamafactory_path = os.path.join(current_dir, "../LLaMA-Factory")
 
@@ -77,4 +98,5 @@ if __name__ == "__main__":
         learning_rate='2.0e-5',
         num_epochs=3.0,
         logging_backend="wandb",
+        lora_name="initial-sft"
     )
