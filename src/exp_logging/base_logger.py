@@ -1,10 +1,29 @@
 from abc import ABC, abstractmethod
 import pandas as pd
 from typing import Dict, Any, Optional, List, Union
+import logging
 
 class BaseLogger(ABC):
     """Abstract base class for experiment tracking loggers."""
-    
+    @abstractmethod
+    def __init__(self, model_name: str = None, lora_name: str = None):
+        """
+        Initialize the logger.
+        
+        Args:
+            model_name: Name of the model
+            lora_name: Name of the LoRA model
+        """
+        self.model_name = model_name
+        self.lora_name = lora_name
+        self.config = {}
+        self.tracking_backend = None
+        self.run = None
+
+    @abstractmethod
+    def auto_init_run(self):
+        pass
+
     @abstractmethod
     def init_run(self, project: str, entity: str, job_type: str, config: Dict[str, Any] = None, 
                  name: Optional[str] = None) -> Any:
@@ -27,17 +46,17 @@ class BaseLogger(ABC):
         pass
     
     @abstractmethod
-    def log_artifact(self, local_path: str, name: Optional[str] = None) -> None:
+    def log_artifact(self, local_path: str, name: Optional[str] = None, type_: str = "file") -> None:
         """Log an artifact file."""
         pass
 
     def log_directory(self, local_dir: str, name: Optional[str] = None, 
-                      artifact_type: str = "directory") -> None:
+                      type_: str = "directory") -> None:
         """
         Log a directory as an artifact.
         By default, uses log_artifact but can be overridden for more efficient implementations.
         """
-        return self.log_artifact(local_dir, name)
+        return self.log_artifact(local_dir, name, type_=type_)
         
         
     @abstractmethod
@@ -76,3 +95,15 @@ class BaseLogger(ABC):
         """
         # Default implementation - not supported
         return None
+
+    def check_run_status(self) -> bool:
+        """
+        Check if the current run is active.
+        
+        Returns:
+            True if the run is active, False otherwise
+        """
+        flag = hasattr(self, 'run') and self.run is not None
+        if not flag:
+            logging.warning("No active run detected.")
+        return flag

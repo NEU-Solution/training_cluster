@@ -8,9 +8,17 @@ import shutil
 import datetime
 import sys
 from typing import Dict, Any, List, Optional
+import time
+import requests
+from requests.exceptions import RequestException
+import threading
+
 
 import logging
 logging.basicConfig(level=logging.INFO)
+
+import sys 
+sys.path.append('..')
 
 # Import logger classes
 from src.exp_logging import BaseLogger, create_logger
@@ -60,7 +68,12 @@ class LogFetcher:
     def detect_new_checkpoints(self):
         """Detect if new checkpoint files have been created."""
         if not self.checkpoint_dir or not self.checkpoint_dir.exists():
-            return None
+            logging.warning("Checkpoint directory does not exist or is not specified.")
+            return []
+        
+        # Check for new checkpoints
+        logging.info(f"Checking for new checkpoints in {self.checkpoint_dir}")
+        
             
         checkpoints = [
             cp for cp in self.checkpoint_dir.glob("checkpoint-*") 
@@ -68,19 +81,21 @@ class LogFetcher:
         ]
         
         if not checkpoints:
-            return None
+            return []
             
         # Sort by modification time (newest first)
-        checkpoints.sort(key=lambda x: x.stat().st_mtime, reverse=True)
-        newest_checkpoint = checkpoints[0]
+        checkpoints.sort(key=lambda x: x.stat().st_mtime,)
+
+        newest_checkpoints = []
+
+        for checkpoint in checkpoints:
+            if checkpoint not in self.known_checkpoints:
+                newest_checkpoints.append(checkpoint)
+                self.known_checkpoints.add(checkpoint)
+
+            return newest_checkpoints
         
-        # Check if this is actually a new checkpoint
-        if newest_checkpoint != self.last_checkpoint:
-            self.last_checkpoint = newest_checkpoint
-            self.known_checkpoints.add(newest_checkpoint)
-            return newest_checkpoint
-        
-        return None
+        return []
 
 
 def log_metrics(logger: BaseLogger, logs: List[Dict[str, Any]]):
@@ -106,7 +121,7 @@ def log_metrics(logger: BaseLogger, logs: List[Dict[str, Any]]):
         
         if metrics:
             logger.log_metrics(metrics)
-            logging.info(f"Logged metrics: {metrics} at step {step}")
+            logging.info(f"Logged metrics: {metrics}")
             
         # Log any non-numeric values as separate artifacts if needed
         for key, value in log_entry.items():
@@ -116,14 +131,62 @@ def log_metrics(logger: BaseLogger, logs: List[Dict[str, Any]]):
                     logger.log_metric(f"{key}_present", 1.0)
 
 
+
+def send_evaluation_request(base_model_name, lora_model_name, eval_server_url=None):
+    """
+    Send an API request to the evaluation server for a new model checkpoint.
+    
+    Args:
+        checkpoint_path: Path to the checkpoint
+        model_name: Name of the model/checkpoint
+        eval_server_url: URL of the evaluation server (defaults to environment variable)
+    """
+    if not eval_server_url:
+        eval_server_url = os.getenv("EVAL_SERVER_URL", "http://localhost:23477") + "/evaluate"
+    
+
+
+    payload = {
+        "base_model_name": base_model_name,
+        "lora_model_name": lora_model_name,
+        "tracking_backend": os.getenv("TRACKING_BACKEND", "wandb"),
+    }
+    
+    def _send_request():
+        logging.info(f"Sending evaluation request to {eval_server_url} for {lora_model_name}")
+        logging.info(f"Payload: {payload}")
+        print ("================= SENDING EVAL REQUEST =================")
+        print (payload)
+        print ("=========================================================")
+        try:
+            logging.info(f"Sending evaluation request for checkpoint: {lora_model_name}")
+            response = requests.post(eval_server_url, json=payload, timeout=10)
+            if response.status_code == 200:
+                logging.info(f"Evaluation request accepted for {lora_model_name}")
+                return response.json()
+            else:
+                logging.warning(f"Evaluation server returned status code {response.status_code} for {lora_model_name}")
+        except RequestException as e:
+            logging.warning(f"Failed to send evaluation request: {e}")
+        except Exception as e:
+            logging.error(f"Unexpected error sending evaluation request: {e}")
+    
+    # Run in background thread to avoid blocking
+    thread = threading.Thread(target=_send_request)
+    thread.daemon = True
+    thread.start()
+
+
+
 def upload_checkpoint(
     logger: BaseLogger, 
     checkpoint_path: Path,
     cloud_storage_path: str = None, 
-    compress: bool = True,
     register_to_registry: bool = True,
     collection_name: str = None,
-    registry_name: str = "model"
+    registry_name: str = "model",
+    checkpoint_name: str = None,
+    trigger_evaluation: bool = True
 ) -> Optional[str]:
     """
     Upload checkpoint to tracking system and optionally to cloud storage
@@ -141,12 +204,22 @@ def upload_checkpoint(
         logging.warning(f"No logger configured, skipping checkpoint upload: {checkpoint_path}")
         return None
     
-    checkpoint_name = checkpoint_path.name
+    # Default checkpoint name will look like "checkpoint-XXXXX"
+    checkpoint_name = checkpoint_path.name if not checkpoint_name else checkpoint_name
+
+    # Delete optimizer.pt file if it exists in the folder
+    optimizer_file = Path(os.path.join(checkpoint_path , "optimizer.pt"))
+    if optimizer_file.exists():
+        logging.info(f"Deleting optimizer file: {optimizer_file}")
+        optimizer_file.unlink()
 
     if not collection_name:
         collection_name = os.getenv("WANDB_REGISTRY", "default")
     
     try:
+
+        artifact_path = ""
+
         if register_to_registry and logger.tracking_backend == "wandb":
             # Use WandB model registry feature
             logging.info(f"Registering checkpoint {checkpoint_path} to WandB registry...")
@@ -156,35 +229,30 @@ def upload_checkpoint(
                 collection_name=collection_name,
                 registry_name=registry_name
             )
+            artifact_path = f"wandb-registry-{registry_name}/{collection_name}"
             logging.info(f"Model registered at: {registry_path}")
-            return checkpoint_name
             
-        elif compress:
-            # Create a compressed tarball of the checkpoint
-            tarball_path = f"/tmp/{checkpoint_name}.tar.gz"
-            
-            logging.info(f"Creating tarball of checkpoint {checkpoint_path}...")
-            import tarfile
-            with tarfile.open(tarball_path, "w:gz") as tar:
-                tar.add(checkpoint_path, arcname=checkpoint_name)
-            
-            # Log tarball as artifact
-            logger.log_artifact(tarball_path, name=f"checkpoint-{checkpoint_name}")
-            logging.info(f"Compressed checkpoint {checkpoint_name} uploaded to tracking system")
-            
-            # Clean up the temporary tarball
-            os.remove(tarball_path)
+        
         else:
             # Log the raw directory as an artifact
             logging.info(f"Uploading raw checkpoint directory {checkpoint_path}...")
-            logger.log_directory(str(checkpoint_path), name=f"checkpoint-{checkpoint_name}")
-            logging.info(f"Raw checkpoint {checkpoint_name} uploaded to tracking system")
-        
+            artifact_path = logger.log_directory(str(checkpoint_path), name=f"{logger.config.get("lora_name","")}-{checkpoint_name}", type_="model")
+            logging.info(f"Raw checkpoint {logger.lora_name}-{checkpoint_name} uploaded to tracking system")
+
+
         # Additional cloud storage upload if needed
         if cloud_storage_path:
             # Placeholder for cloud upload
             logging.info(f"Uploading checkpoint to cloud storage: {cloud_storage_path}")
             # This would typically use cloud SDK (AWS S3, GCP, etc.)
+
+        # Trigger evaluation if needed
+        if trigger_evaluation and logger.config.get("model_name") :
+            print ("================= TRIGGERING EVAL =================")
+            send_evaluation_request(
+                base_model_name=logger.config.get("model_name"),
+                lora_model_name=artifact_path,
+            )
         
         return checkpoint_name
     
@@ -193,8 +261,28 @@ def upload_checkpoint(
         return None
 
 
-def monitor_training(log_file, checkpoint_dir, logger: BaseLogger = None, 
-                    interval: int = 15, stall_timeout: int = 600, compress_checkpoints: bool = True):
+def scrape_log(fetcher: LogFetcher, **kwargs):
+    new_logs = fetcher.fetch_new_logs()
+    if new_logs:
+        log_metrics(fetcher.logger, new_logs)
+
+    new_checkpoints = fetcher.detect_new_checkpoints()
+    for new_checkpoint in new_checkpoints:
+    
+        checkpoint_name = upload_checkpoint(
+            fetcher.logger, new_checkpoint, 
+            **kwargs,
+        )
+
+
+def monitor_training(
+    fetcher: LogFetcher, 
+    interval: int = 15, 
+    stall_timeout: int = 180,
+    training_completed_event=None,
+    upload_timeout: int = 300,  # 5 minutes to complete uploads after training
+    trigger_evaluation: bool = True
+):    
     """
     Monitor training logs and checkpoints at specified intervals.
     
@@ -206,59 +294,67 @@ def monitor_training(log_file, checkpoint_dir, logger: BaseLogger = None,
         stall_timeout: How long to wait with no changes before stopping (seconds)
         compress_checkpoints: Whether to compress checkpoints before uploading
     """
-    fetcher = LogFetcher(log_file, logger=logger, checkpoint_dir=checkpoint_dir)
+    # fetcher = LogFetcher(log_file, logger=logger, checkpoint_dir=checkpoint_dir)
     
-    last_activity_time = time.time()
+
     had_activity = False
+    logger = fetcher.logger
+    if not logger:
+        logging.warning("No logger configured, skipping monitoring")
+        return
+    
+    max_not_update = int(stall_timeout / interval)
+    max_not_update_after_training = int(upload_timeout / interval)
+    not_update_count = 0
     
     try:
         while True:
-            current_time = time.time()
+            
             activity_detected = False
             
             # Fetch and process new logs
             new_logs = fetcher.fetch_new_logs()
             if new_logs:
                 log_metrics(logger, new_logs)
-                activity_detected = True
-                last_activity_time = current_time
-                if not had_activity:
-                    had_activity = True
-                    logging.info("Initial activity detected")
+                activity_detected |= True
             
             # Detect and process new checkpoints
-            new_checkpoint = fetcher.detect_new_checkpoints()
-            if new_checkpoint:
+            new_checkpoints = fetcher.detect_new_checkpoints()
+            for new_checkpoint in new_checkpoints:
                 checkpoint_name = upload_checkpoint(
                     logger, new_checkpoint, 
                     cloud_storage_path=None, 
-                    compress=compress_checkpoints
+                    trigger_evaluation=trigger_evaluation
                 )
                 if logger:
                     logger.log_metric("new_checkpoint", 1.0)
                     logger.update_summary("latest_checkpoint", checkpoint_name)
                 logging.info(f"New checkpoint processed: {checkpoint_name}")
-                activity_detected = True
-                last_activity_time = current_time
-
-            had_activity = activity_detected
+                activity_detected |= True
             
+            had_activity = activity_detected
+
+            if had_activity:
+                activity_detected = 0
+            else:
+                not_update_count += 1
+                logging.info(f"No updates detected for {not_update_count * interval} seconds")
             # Check for stall condition
-            if not had_activity and (current_time - last_activity_time) > stall_timeout:
-                if logger:
-                    logger.log_metric("training_stalled", 1.0)
-                    logger.update_summary("stalled_after_seconds", int(current_time - last_activity_time))
-                logging.warning(f"Training appears stalled - no activity for {stall_timeout} seconds. Stopping monitoring.")
+            current_max_not_update = max_not_update_after_training if training_completed_event and training_completed_event.is_set() else max_not_update
+            
+            if not_update_count >= current_max_not_update:
+                if training_completed_event and training_completed_event.is_set():
+                    logging.info("Training has completed and upload timeout reached, stopping monitoring")
+                else:
+                    logging.info("Stall condition detected, stopping monitoring")
                 break
             
             # Log stall status periodically if we're getting close to timeout
-            if not had_activity and (current_time - last_activity_time) > (stall_timeout / 2):
-                inactive_time = int(current_time - last_activity_time)
-                
-                logging.warning(f"No activity detected for {inactive_time} seconds (timeout: {stall_timeout})")
-                if logger and inactive_time % 60 == 0:  # Log every minute when getting close to stalled
-                    logger.log_metric("inactive_seconds", inactive_time)
-            
+            if not_update_count >= current_max_not_update // 2:
+                if training_completed_event and training_completed_event.is_set():
+                    logging.info(f"Post-training upload: {not_update_count * interval} seconds without updates")
+                else:
+                    logging.info(f"Stall condition approaching: {not_update_count * interval} seconds without updates")
             
             time.sleep(interval)
             
@@ -282,7 +378,12 @@ if __name__ == "__main__":
     )
     
     try:
+        fetcher = LogFetcher(
+            log_file_path="../LLaMA-Factory/saves/models/lora/sft/DS0gpA/trainer_log.jsonl",
+            logger=logger,
+            checkpoint_dir="../LLaMA-Factory/saves/models/lora/sft/DS0gpA"
+        )
         # Example usage
-        monitor_training("outputs/training_log.json", "outputs/checkpoints", logger=logger)
+        monitor_training(fetcher, compress_checkpoints=False, interval=5, stall_timeout=60)
     finally:
         logger.finish_run()

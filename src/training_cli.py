@@ -12,9 +12,10 @@ from dotenv import load_dotenv
 import sys 
 sys.path.append('..')
 # Import logger and monitoring functionality
-from src.fetch_logs import monitor_training
+from src.fetch_logs import monitor_training, scrape_log, LogFetcher
 from src.exp_logging import BaseLogger, create_logger
 import logging
+import threading
 
 # Load environment variables
 load_dotenv()
@@ -22,7 +23,9 @@ load_dotenv()
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
 class TrainingRunner:
-    def __init__(self, output_dir="saves", tracking_backend="wandb", logger=None):
+    def __init__(self, output_dir="saves", tracking_backend:str = None, logger=None):
+        
+
         self.process = None
         self.training_id = str(int(time.time()))
         self.output_dir = os.path.join(current_dir, '../LLaMA-Factory', output_dir)
@@ -30,6 +33,7 @@ class TrainingRunner:
 
         self.checkpoints_dir = ""
         self.log_file = ""
+        self.is_logger_running = False
 
         
         # Setup logging
@@ -38,10 +42,10 @@ class TrainingRunner:
         if self.logger is None:
             self.logger = create_logger(tracking_backend)
             self.logger.login()
-        
-    def start_training(self, command, training_args=None):
-        """Start the training process with the given command."""
-        # Initialize tracking run
+            self.tracking_backend = self.logger.tracking_backend
+
+    def start_logging(self, training_args=None):
+
         run_name = f"training_{self.training_id}_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
         
         # Create a config dict from training args
@@ -49,9 +53,8 @@ class TrainingRunner:
         if training_args:
             config = vars(training_args) if hasattr(training_args, '__dict__') else training_args
         
-        # Add command to config
-        config['command'] = command
-        
+        print(f"Config: {config}")
+
         # Start tracking run
         if self.logger.tracking_backend == 'wandb':
             run = self.logger.init_run(
@@ -68,7 +71,20 @@ class TrainingRunner:
                 config=config,
                 name=run_name
             )
+
+        self.is_logger_running = True
         logging.info(f"Tracking run started")
+
+        
+    def start_training(self, command, training_args=None):
+        
+        # Start logging
+        if not self.is_logger_running:
+            self.start_logging(training_args)
+
+        # Log training command
+        logging.info(f"Starting training with command: {command}")
+        
         
         # Create log file for the monitor to read
         self.log_file = os.path.join(self.output_dir, "trainer_log.jsonl")
@@ -130,20 +146,33 @@ class TrainingRunner:
         signal.signal(signal.SIGINT, self.signal_handler)
         signal.signal(signal.SIGTERM, self.signal_handler)
         
-    def run_training(self, command, monitor_interval=15, **kwargs):
+    def run_training(self, command, monitor_interval=15, upload_timeout=60, max_wait_time=900, trigger_evaluation: bool = True, **kwargs):
         """Run training with the given command and monitor it."""
-        self.setup_signal_handlers()
+        # self.setup_signal_handlers()
         
         try:
             training_id = self.start_training(command, kwargs.get('training_args'))
             logging.info(f"Training started with ID: {training_id}")
             logging.info(f"Logs will be tracked with {self.tracking_backend}")
             
+            fetcher = LogFetcher(
+                log_file_path=self.log_file,
+                checkpoint_dir=self.checkpoints_dir,
+                logger=self.logger
+            )
+            
+            training_completed = threading.Event()
+
             # Start monitoring in a separate thread
-            from threading import Thread
-            monitor_thread = Thread(
+            monitor_thread = threading.Thread(
                 target=monitor_training,
-                args=(self.log_file, self.checkpoints_dir, self.logger, monitor_interval),
+                args=(
+                    fetcher, 
+                    monitor_interval,
+                    180,  # stall_timeout
+                    training_completed,
+                    upload_timeout
+                ),
                 daemon=True
             )
             monitor_thread.start()
@@ -167,6 +196,8 @@ class TrainingRunner:
             
             # Get exit code
             exit_code = self.process.poll()
+            training_completed.set()
+            logging.info("Training process completed, waiting for model uploads to finish...")
             
             if not self._should_stop:
                 # Training completed naturally
@@ -182,7 +213,26 @@ class TrainingRunner:
                         self.logger.log_metric("training_failed", exit_code)
             
             # Wait for monitor thread to clean up
-            monitor_thread.join(timeout=5)
+            start_wait_time = time.time()
+            monitor_thread.join(timeout=upload_timeout)  # Give extra 30 seconds beyond upload timeout
+            
+            count = 0
+
+            while monitor_thread.is_alive():
+                elapsed_time = time.time() - start_wait_time
+                if elapsed_time > max_wait_time:
+                    logging.warning(f"Maximum wait time ({max_wait_time/60:.1f} min) exceeded. Uploads may still be in progress.")
+                    break
+
+                if count > 0:
+                    logging.info(f"Waiting for uploads to complete... {elapsed_time:.1f} seconds elapsed")
+            
+            if monitor_thread.is_alive():
+                logging.warning(f"Monitor thread is still running after {(time.time() - start_wait_time)/60:.1f} minutes. " 
+                            f"Uploads may still be in progress, but we'll continue.")
+            else:
+                logging.info("Model uploads completed successfully")
+            
             
             return training_id
             
@@ -202,7 +252,16 @@ class TrainingRunner:
             raise
         
         finally:
-            # Always close the run
+
+            # monitor_thread.join(timeout=monitor_interval + 5)
+            logging.info("Training process finished. Cleaning up...")
+            try:
+                scrape_log(fetcher, trigger_evaluation=trigger_evaluation)
+            except Exception as e:
+                logging.error(f"Error in final scrape_log: {e}")
+            # Collect any remaining logs
+
+            # # Always close the run
             if self.logger:
                 self.logger.finish_run()
 

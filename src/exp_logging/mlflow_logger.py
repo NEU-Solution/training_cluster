@@ -3,15 +3,20 @@ import mlflow
 import pandas as pd
 from typing import Dict, Any, Optional, List, Union
 from .base_logger import BaseLogger
+import datetime
 
 class MLflowLogger(BaseLogger):
     """MLflow implementation of BaseLogger."""
     
-    def __init__(self):
+    def __init__(self, model_name: str = None, lora_name: str = None):
         self.tracking_uri = os.getenv("MLFLOW_TRACKING_URI")
         self.experiment_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "Default")
         self.run_id = None
         self.tracking_backend = "mlflow"
+
+        self.model_name = model_name
+        self.lora_name = lora_name
+        self.config = {}
         
     def login(self, **kwargs):
         """Set up MLflow tracking."""
@@ -36,6 +41,11 @@ class MLflowLogger(BaseLogger):
         tags = {"job_type": job_type}
         if entity:
             tags["entity"] = entity
+
+        if 'model_name' in config:
+            self.model_name = config['model_name']
+        if 'lora_name' in config:
+            self.lora_name = config['lora_name']
         
         active_run = mlflow.start_run(
             run_name=name,
@@ -52,17 +62,41 @@ class MLflowLogger(BaseLogger):
                     
         return active_run
     
+
+    def auto_init_run(self, config = None):
+        project = os.getenv("MLFLOW_EXPERIMENT_NAME", "training")
+        job_type = os.getenv("MLFLOW_JOB_TYPE", "training")
+        config = config or {}
+        run_name = f"auto_run_{self.run_id}_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+        
+        self.init_run(
+            project=project,
+            job_type=job_type,
+            config=config,
+            name=run_name
+        )
+
+    
     def log_metric(self, key: str, value: Union[float, int]) -> None:
         """Log a single metric to MLflow."""
+        if not self.check_run_status():
+            return
+        
         mlflow.log_metric(key, value)
         
     def log_metrics(self, metrics: Dict[str, Union[float, int]]) -> None:
         """Log multiple metrics to MLflow."""
+        if not self.check_run_status():
+            return
+        
         mlflow.log_metrics(metrics)
     
     def log_table(self, key: str, dataframe: pd.DataFrame) -> None:
         """Log a dataframe as a table to MLflow."""
         # Save dataframe to CSV and log it
+        if not self.check_run_status():
+            return
+        
         temp_path = f"/tmp/{key}.csv"
         dataframe.to_csv(temp_path, index=False)
         mlflow.log_artifact(temp_path, f"tables/{key}")
@@ -73,19 +107,32 @@ class MLflowLogger(BaseLogger):
         except:
             pass
     
-    def log_artifact(self, local_path: str, name: Optional[str] = None) -> None:
-        """Log an artifact file to MLflow."""
+    def log_artifact(self, local_path: str, name: Optional[str] = None, type_ = "file") -> str:
+        """Log an artifact file to MLflow and return the artifact path.
+        
+        Args:
+            local_path: Path to the local file to log
+            name: Optional artifact path to log to within the run
+            type_: Type of artifact (default: "file")
+            
+        Returns:
+            String path to the logged artifact in MLflow
+        """
+        if not self.check_run_status():
+            return None
+        
         artifact_path = name or ""
         mlflow.log_artifact(local_path, artifact_path)
+        
+        # Construct the artifact path in MLflow
+        file_name = os.path.basename(local_path)
+        if artifact_path:
+            full_artifact_path = f"{artifact_path}/{file_name}"
+        else:
+            full_artifact_path = file_name
+            
+        return full_artifact_path
 
-    def log_directory(self, local_dir: str, name: Optional[str] = None, 
-                     artifact_type: str = "directory") -> None:
-        """
-        Log a directory as an artifact to MLflow.
-        In MLflow, we use log_artifacts for directories.
-        """
-        artifact_path = name or os.path.basename(local_dir)
-        mlflow.log_artifacts(local_dir, artifact_path=artifact_path)
         
     def update_summary(self, key: str, value: Any) -> None:
         """Update a summary metric in MLflow."""
