@@ -4,16 +4,23 @@ import pandas as pd
 from typing import Dict, Any, Optional, List, Union
 from .base_logger import BaseLogger
 import datetime
+import logging
 
 class WandbLogger(BaseLogger):
     """Weights & Biases implementation of BaseLogger."""
     
-    def __init__(self):
+    def __init__(self, model_name: str = None, lora_name: str = None):
+        self.model_name = model_name
+        self.lora_name = lora_name
+
+
         self.run = None
         self.api_key = os.getenv("WANDB_API_KEY")
         self.project = os.getenv("WANDB_PROJECT")
         self.entity = os.getenv("WANDB_ENTITY")
         self.tracking_backend = "wandb"
+
+        self.config = {}
         
     def login(self, **kwargs):
         """Login to WandB."""
@@ -23,6 +30,21 @@ class WandbLogger(BaseLogger):
     def init_run(self, project: str = None, entity: str = None, job_type: str = "experiment", 
                  config: Dict[str, Any] = None, name: Optional[str] = None) -> Any:
         """Initialize a new WandB run."""
+        
+        if project:
+            self.project = project
+        if entity:
+            self.entity = entity
+        if job_type:
+            self.job_type = job_type
+        if config:
+            self.config = config
+
+        if 'model_name' in config:
+            self.model_name = config['model_name']
+        if 'lora_name' in config:
+            self.lora_name = config['lora_name']
+
         self.run = wandb.init(
             project=project or self.project,
             entity=entity or self.entity,
@@ -30,6 +52,7 @@ class WandbLogger(BaseLogger):
             config=config,
             name=name
         )
+        self.run_name = self.run.name
         return self.run
     
     def auto_init_run(self, config = None):
@@ -39,43 +62,53 @@ class WandbLogger(BaseLogger):
         job_type = os.getenv("WANDB_JOB_TYPE", "training")
         config = config or {}
 
-        run_name = f"training_{self.training_id}_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
-
-        return self.init_run(
+        self.init_run(
             project=project,
-            entity=self.entity,
+            entity=entity,
             job_type=job_type,
             config=config,
-            name=run_name
+            name=f"{project}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
         )
     
     def log_metric(self, key: str, value: Union[float, int]) -> None:
         """Log a single metric to WandB."""
+        if not self.check_run_status():
+            return
         self.run.log({key: value})
         
     def log_metrics(self, metrics: Dict[str, Union[float, int]]) -> None:
+        
+        
         """Log multiple metrics to WandB."""
+        if not self.check_run_status():
+            return
         self.run.log(metrics)
     
     def log_table(self, key: str, dataframe: pd.DataFrame) -> None:
         """Log a dataframe as a table to WandB."""
+        if not self.check_run_status():
+            return
+        
         table = wandb.Table(dataframe=dataframe)
         self.run.log({key: table})
     
-    def log_artifact(self, local_path: str, name: Optional[str] = None) -> None:
+    def log_artifact(self, local_path: str, name: Optional[str] = None, type_ = "file" ) -> None:
         """Log an artifact file to WandB."""
-        artifact = wandb.Artifact(name=name or os.path.basename(local_path), type="dataset")
+        if not self.check_run_status():
+            return
+        
+        artifact = wandb.Artifact(name=name or os.path.basename(local_path), type = type_)
         artifact.add_file(local_path)
         self.run.log_artifact(artifact)
 
-    def log_artifact(self, local_path: str, name: Optional[str] = None) -> None:
-        """Log an artifact file to WandB."""
-        artifact = wandb.Artifact(name=name or os.path.basename(local_path), type="file")
-        artifact.add_file(local_path)
-        self.run.log_artifact(artifact)
+        return f"{self.entity}/{self.project}/{artifact.name}"
+
         
     def update_summary(self, key: str, value: Any) -> None:
         """Update a summary metric in WandB."""
+        if not self.check_run_status():
+            return
+        
         self.run.summary[key] = value
     
     def finish_run(self) -> None:
@@ -86,6 +119,9 @@ class WandbLogger(BaseLogger):
 
     def get_tracking_url(self) -> Optional[str]:
         """Get URL to the current run in WandB UI."""
+        if not self.check_run_status():
+            return
+        
         if self.run:
             return self.run.get_url()
         return None
@@ -93,9 +129,8 @@ class WandbLogger(BaseLogger):
     def register_model(self, model_path: str, model_name: str, collection_name: str = None, 
                   registry_name: str = "model", **kwargs) -> Optional[str]:
        
-        if not self.run:
-            print("Cannot register model: No active WandB run")
-            return None
+        if not self.check_run_status():
+            return
             
         try:
             # Log the model as an artifact

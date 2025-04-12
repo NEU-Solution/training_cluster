@@ -19,15 +19,17 @@ WANDB_API_KEY = os.getenv("WANDB_API_KEY")
 DEFAULT_CONFIG = {
     # Model configuration
     "model_name": "Qwen/Qwen2.5-1.5B-Instruct",
+    "lora_name": "initial-sft",
     "dataset_version": "v1.0",
     "template": "qwen",
     "cutoff_len": 2048,
     "max_samples": 1000,
     "batch_size": 1,
-    "gradient_accumulation_steps": 2,
-    "learning_rate": 2.0e-5,
+    "gradient_accumulation_steps": 8,
+    "learning_rate": "2.0e-5",
     "num_epochs": 3.0,
     "adapter_path": None,
+    "save_steps": 100,
     
     # Tracking configuration
     "tracking_backend": 'wandb',

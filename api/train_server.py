@@ -121,21 +121,21 @@ async def run_training_job(job_id: str, config: Dict[str, Any], webhook_url: Opt
     """
     global is_training_running, training_queue
     
-    tracking_backend = config["tracking_backend"]
+    logging_backend = config["logging_backend"]
     logger_instance = None
     tracking_url = None
     
     try:
-        logger.info(f"Starting training job {job_id} with tracking backend: {tracking_backend}")
+        logger.info(f"Starting training job {job_id} with tracking backend: {logging_backend}")
         
         # Initialize the tracking logger
-        logger_instance = create_logger(tracking_backend)
+        logger_instance = create_logger(logging_backend)
         logger_instance.login()
         
         # Initialize tracking run
         run_name = f"api_train_{datetime.datetime.now().strftime('%Y-%m-%d')}_{job_id[:8]}"
         
-        if tracking_backend == 'wandb':
+        if logging_backend == 'wandb':
             import wandb
             wandb.login(key=WANDB_API_KEY)
             run = logger_instance.init_run(
@@ -160,23 +160,15 @@ async def run_training_job(job_id: str, config: Dict[str, Any], webhook_url: Opt
         
         # Update job with tracking URL
         training_jobs[job_id]["tracking_url"] = tracking_url
+
+        config["learning_rate"] = str(config["learning_rate"])  # Convert to string as expected by train function
         
         # Run the training in a separate thread to not block the event loop
         loop = asyncio.get_running_loop()
         output_path = await loop.run_in_executor(
             thread_pool,
             lambda: train(
-                model_name=config["model_name"],
-                dataset_version=config["dataset_version"],
-                template=config["template"],
-                cutoff_len=config["cutoff_len"],
-                max_samples=config["max_samples"],
-                batch_size=config["batch_size"],
-                gradient_accumulation_steps=config["gradient_accumulation_steps"],
-                learning_rate=str(config["learning_rate"]),  # Convert to string as expected by train function
-                num_epochs=config["num_epochs"],
-                logging_backend=tracking_backend,
-                adapter_path=config.get("adapter_path")
+                **config,
             )
         )
         

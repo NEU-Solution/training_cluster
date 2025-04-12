@@ -8,10 +8,11 @@ from enum import Enum
 DEFAULT_CONFIG = {
     # Model configuration
     "model_name": "Qwen/Qwen2.5-1.5B-Instruct",
+    "lora_name": "initial-sft",
     "dataset_version": "v1.0",
     "template": "qwen",
     "cutoff_len": 2048,
-    "max_samples": 1000,
+    "max_samples": 10000,
     "batch_size": 1,
     "gradient_accumulation_steps": 2,
     "learning_rate": '2.0e-5',
@@ -19,7 +20,7 @@ DEFAULT_CONFIG = {
     "adapter_path": None,
     
     # Tracking configuration
-    "tracking_backend": 'wandb',
+    "logging_backend": 'wandb',
     
     # WandB specific config
     "wandb_project": os.getenv("WANDB_PROJECT"),
@@ -77,11 +78,27 @@ class TrainingRequest(BaseModel):
         default=DEFAULT_CONFIG["num_epochs"],
         description="Number of training epochs"
     )
+    save_steps: int = Field(
+        default=1000,
+        description="Number of steps between saving checkpoints"
+    )
+    lora_name: Optional[str] = Field(
+        default=DEFAULT_CONFIG["lora_name"],
+        description="Name of the LoRA model to use"
+    )
+    lora_version: Optional[str] = Field(
+        default=None,
+        description="Version of the LoRA model to use"
+    )
+    lora_hf_repo: Optional[str] = Field(
+        default=None,
+        description="Hugging Face repository for LoRA model"
+    )
     adapter_path: Optional[str] = Field(
         default=None,
         description="Path to adapter/LoRA weights to continue training from"
     )
-    tracking_backend: TrackingBackend = Field(
+    logging_backend: TrackingBackend = Field(
         default=TrackingBackend.WANDB,
         description="Backend to use for experiment tracking"
     )

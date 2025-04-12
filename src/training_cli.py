@@ -15,6 +15,7 @@ sys.path.append('..')
 from src.fetch_logs import monitor_training, scrape_log, LogFetcher
 from src.exp_logging import BaseLogger, create_logger
 import logging
+import threading
 
 # Load environment variables
 load_dotenv()
@@ -52,6 +53,8 @@ class TrainingRunner:
         if training_args:
             config = vars(training_args) if hasattr(training_args, '__dict__') else training_args
         
+        print(f"Config: {config}")
+
         # Start tracking run
         if self.logger.tracking_backend == 'wandb':
             run = self.logger.init_run(
@@ -143,7 +146,7 @@ class TrainingRunner:
         signal.signal(signal.SIGINT, self.signal_handler)
         signal.signal(signal.SIGTERM, self.signal_handler)
         
-    def run_training(self, command, monitor_interval=15, compress_checkpoints = False, **kwargs):
+    def run_training(self, command, monitor_interval=15, upload_timeout=60, max_wait_time=900, trigger_evaluation: bool = True, **kwargs):
         """Run training with the given command and monitor it."""
         # self.setup_signal_handlers()
         
@@ -158,12 +161,18 @@ class TrainingRunner:
                 logger=self.logger
             )
             
+            training_completed = threading.Event()
 
             # Start monitoring in a separate thread
-            from threading import Thread
-            monitor_thread = Thread(
+            monitor_thread = threading.Thread(
                 target=monitor_training,
-                args=(fetcher, compress_checkpoints),
+                args=(
+                    fetcher, 
+                    monitor_interval,
+                    180,  # stall_timeout
+                    training_completed,
+                    upload_timeout
+                ),
                 daemon=True
             )
             monitor_thread.start()
@@ -187,7 +196,8 @@ class TrainingRunner:
             
             # Get exit code
             exit_code = self.process.poll()
-            monitor_thread.join(timeout=monitor_interval + 5)
+            training_completed.set()
+            logging.info("Training process completed, waiting for model uploads to finish...")
             
             if not self._should_stop:
                 # Training completed naturally
@@ -203,6 +213,25 @@ class TrainingRunner:
                         self.logger.log_metric("training_failed", exit_code)
             
             # Wait for monitor thread to clean up
+            start_wait_time = time.time()
+            monitor_thread.join(timeout=upload_timeout)  # Give extra 30 seconds beyond upload timeout
+            
+            count = 0
+
+            while monitor_thread.is_alive():
+                elapsed_time = time.time() - start_wait_time
+                if elapsed_time > max_wait_time:
+                    logging.warning(f"Maximum wait time ({max_wait_time/60:.1f} min) exceeded. Uploads may still be in progress.")
+                    break
+
+                if count > 0:
+                    logging.info(f"Waiting for uploads to complete... {elapsed_time:.1f} seconds elapsed")
+            
+            if monitor_thread.is_alive():
+                logging.warning(f"Monitor thread is still running after {(time.time() - start_wait_time)/60:.1f} minutes. " 
+                            f"Uploads may still be in progress, but we'll continue.")
+            else:
+                logging.info("Model uploads completed successfully")
             
             
             return training_id
@@ -224,10 +253,12 @@ class TrainingRunner:
         
         finally:
 
-            monitor_thread.join(timeout=monitor_interval + 5)
+            # monitor_thread.join(timeout=monitor_interval + 5)
             logging.info("Training process finished. Cleaning up...")
-            scrape_log(fetcher, compress_checkpoints=compress_checkpoints)
-
+            try:
+                scrape_log(fetcher, trigger_evaluation=trigger_evaluation)
+            except Exception as e:
+                logging.error(f"Error in final scrape_log: {e}")
             # Collect any remaining logs
 
             # # Always close the run

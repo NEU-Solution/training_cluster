@@ -17,6 +17,7 @@ curl -X POST http://localhost:23478/train \
   -H "Content-Type: application/json" \
   -d '{
     "model_name": "Qwen/Qwen2.5-1.5B-Instruct",
+    "lora_name": "initial-sft",
     "dataset_version": "v1.0",
     "template": "qwen",
     "tracking_backend": "wandb"

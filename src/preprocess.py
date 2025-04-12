@@ -94,6 +94,7 @@ def create_training_yaml(
     cutoff_len=2048,
     max_samples=10000,
     output_dir="saves/models/lora/sft",
+    save_steps=1000,
     batch_size=1,
     gradient_accumulation_steps=8,
     learning_rate='2.0e-5',
@@ -132,7 +133,7 @@ def create_training_yaml(
         
         "output_dir": output_dir,
         "logging_steps": 20,
-        "save_steps": 2000,
+        "save_steps": save_steps,
         "plot_loss": True,
         "overwrite_output_dir": True,
         "save_only_model": False,

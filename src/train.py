@@ -22,11 +22,13 @@ def train(
     gradient_accumulation_steps: int,
     learning_rate: str = '2.0e-5',
     num_epochs: int = 2.0,
+    save_steps: int = 1000,
     lora_name: str = None,
     lora_version: str = None,
     lora_hf_repo: str = None,
     logging_backend: str = "wandb",
     adapter_path: str = None,
+    **kwargs
 ):
     # Pull data from database
     dataset_name = fake_etl(dataset_version)
@@ -46,8 +48,15 @@ def train(
         logger=logger,
     )
 
+    training_args = {
+        "model_name": model_name,
+        "dataset_name": dataset_name,
+        "lora_name": lora_name,
+        "lora_version": lora_version,
+    }
+
     # Start logging
-    runner.start_logging()
+    runner.start_logging(training_args=training_args)
 
     adapter_path = None
     if lora_name:
@@ -68,6 +77,7 @@ def train(
         cutoff_len=cutoff_len,
         max_samples=max_samples,
         batch_size=batch_size,
+        save_steps=save_steps,
         gradient_accumulation_steps=gradient_accumulation_steps,
         learning_rate=learning_rate,
         num_epochs=num_epochs,
@@ -93,6 +103,7 @@ if __name__ == "__main__":
         template="qwen",
         cutoff_len=2048,
         max_samples=1000,
+        save_steps=200,
         batch_size=1,
         gradient_accumulation_steps=2,
         learning_rate='2.0e-5',
