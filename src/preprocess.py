@@ -71,12 +71,12 @@ def download_model_regristry(model_name: str, version: str = None, download_dir:
         
         # Download via MLflow
         artifact_dir = os.path.join(download_dir, model_name.replace("/", "_"))
-        registered_model = mlflow.register_model(
-            f"models:/{model_name}/{version}",
-            model_name
-        )
+        # registered_model = mlflow.register_model(
+        #     f"models:/{model_name}/{version}",
+        #     model_name
+        # )
         mlflow.artifacts.download_artifacts(
-            artifact_uri=f"models:/{model_name}/{version}",
+            artifact_uri=f"models:/{model_name}@{version}" if version else f"models:/{model_name}@latest",
             dst_path=artifact_dir
         )
     else:
@@ -85,6 +85,62 @@ def download_model_regristry(model_name: str, version: str = None, download_dir:
     logging.info(f"Downloaded model {model_name} version {version} to {artifact_dir}")
     
     return artifact_dir
+
+
+def download_model_artifact(model_name: str, version: str = None, download_dir: str = 'models', logger: BaseLogger = None, hf_repo: str = None) -> str:
+    assert model_name, "Model name can not be empty"
+    assert logger, "No logger instance provided"
+
+    # if 'wandb-registry-model' not in model_name:
+    #     model_name = 'wandb-registry-model/' + model_name
+
+    # Initialize a W&B run
+    
+    # Download the model
+
+    download_dir = os.path.join('../', download_dir)
+    os.makedirs(download_dir, exist_ok=True)
+
+    if hf_repo is not None:
+        # Download from Hugging Face Hub
+        artifact_dir = snapshot_download(
+            repo_id=hf_repo,
+            revision=version,
+            cache_dir=download_dir
+        )
+        logging.info(f"Downloaded model from Hugging Face Hub to {artifact_dir}")
+        
+        if version is not None:
+            artifact_dir = os.path.join(artifact_dir, version)
+        
+        return artifact_dir
+    
+    if logger.tracking_backend == 'wandb':
+        # Download the model using wandb API
+        artifact = wandb.use_artifact(
+            f"{logger.entity}/{logger.project}/{model_name}:{version}" if version else f"{logger.entity}/{logger.project}/{model_name}:latest"
+        )
+        artifact_dir = artifact.download(root=download_dir)
+    elif logger.tracking_backend == 'mlflow':
+        # Handle MLflow model download
+        if version is None:
+            version = "latest"
+            
+        # Set MLflow tracking URI
+        mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI"))
+        
+        # Download via MLflow
+        artifact_dir = os.path.join(download_dir, model_name.replace("/", "_"))
+        # registered_model = mlflow.register_model(
+        #     f"models:/{model_name}/{version}",
+        #     model_name
+        # )
+        mlflow.artifacts.download_artifacts(
+            artifact_uri=f"runs:/{logger.run_id}/model",
+            dst_path=artifact_dir
+        )
+
+
 
 def create_training_yaml(
     model_name_or_path="Qwen/Qwen2.5-0.5B-Instruct",

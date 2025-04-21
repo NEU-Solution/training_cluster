@@ -153,3 +153,43 @@ class MLflowLogger(BaseLogger):
             if tracking_uri.startswith('http'):
                 return f"{tracking_uri}/#/experiments/{mlflow.active_run().info.experiment_id}/runs/{self.run_id}"
         return None
+    
+    def register_model(self, model_path: str, model_name: str = None, tags: Dict[str, Any] = None, collection_name: str = None) -> str:
+        """Register a model with MLflow Model Registry and optionally add it to a collection.
+        
+        Args:
+            model_path: Path to the model to register
+            model_name: Name to register the model under (defaults to self.model_name if not provided)
+            tags: Optional dictionary of tags to add to the model
+            collection_name: Optional name of the collection to register the model in
+            
+        Returns:
+            The model version URI after registration
+        """
+        if not self.check_run_status():
+            return None
+        
+        # Use provided model_name or fall back to instance model_name
+        name = model_name or self.model_name
+        
+        if not name:
+            raise ValueError("Model name must be provided either in method call or at logger initialization")
+        
+        # First log the model as an artifact
+        self.log_artifact(model_path, name=model_name, type_="model")
+        
+        # Register the model using the logged artifact
+        model_uri = f"runs:/{self.run_id}/{os.path.basename(model_path)}"
+        result = mlflow.register_model(model_uri=model_uri, name=name)
+        
+        # Add tags if provided
+        if tags and result:
+            for key, value in tags.items():
+                mlflow.models.set_model_version_tag(name=name, version=result.version, key=key, value=value)
+        
+        # Register model to collection if provided
+        if collection_name:
+            client = mlflow.MlflowClient()
+            client.set_registered_model_alias(name=name, version=result.version, alias=collection_name)
+        
+        return f"models:/{name}/{result.version}"

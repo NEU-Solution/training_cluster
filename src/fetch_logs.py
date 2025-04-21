@@ -220,17 +220,17 @@ def upload_checkpoint(
 
         artifact_path = ""
 
-        if register_to_registry and logger.tracking_backend == "wandb":
+        if register_to_registry:
             # Use WandB model registry feature
             logging.info(f"Registering checkpoint {checkpoint_path} to WandB registry...")
-            registry_path = logger.register_model(
+            artifact_path = logger.register_model(
                 model_path=str(checkpoint_path),
                 model_name=checkpoint_name,
                 collection_name=collection_name,
                 registry_name=registry_name
             )
-            artifact_path = f"wandb-registry-{registry_name}/{collection_name}"
-            logging.info(f"Model registered at: {registry_path}")
+            
+            logging.info(f"Model registered at: {artifact_path}")
             
         
         else:
