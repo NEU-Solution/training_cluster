@@ -121,21 +121,21 @@ async def run_training_job(job_id: str, config: Dict[str, Any], webhook_url: Opt
     """
     global is_training_running, training_queue
     
-    logging_backend = config["logging_backend"]
+    tracking_backend = config["tracking_backend"]
     logger_instance = None
     tracking_url = None
     
     try:
-        logger.info(f"Starting training job {job_id} with tracking backend: {logging_backend}")
+        logger.info(f"Starting training job {job_id} with tracking backend: {tracking_backend}")
         
         # Initialize the tracking logger
-        logger_instance = create_logger(logging_backend)
+        logger_instance = create_logger(tracking_backend)
         logger_instance.login()
         
         # Initialize tracking run
         run_name = f"api_train_{datetime.datetime.now().strftime('%Y-%m-%d')}_{job_id[:8]}"
         
-        if logging_backend == 'wandb':
+        if tracking_backend == 'wandb':
             import wandb
             wandb.login(key=WANDB_API_KEY)
             run = logger_instance.init_run(
@@ -162,7 +162,6 @@ async def run_training_job(job_id: str, config: Dict[str, Any], webhook_url: Opt
         training_jobs[job_id]["tracking_url"] = tracking_url
 
         config["learning_rate"] = str(config["learning_rate"])  # Convert to string as expected by train function
-        
         # Run the training in a separate thread to not block the event loop
         loop = asyncio.get_running_loop()
         output_path = await loop.run_in_executor(

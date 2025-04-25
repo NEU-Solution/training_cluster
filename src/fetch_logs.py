@@ -13,7 +13,6 @@ import requests
 from requests.exceptions import RequestException
 import threading
 
-
 import logging
 logging.basicConfig(level=logging.INFO)
 
@@ -21,7 +20,7 @@ import sys
 sys.path.append('..')
 
 # Import logger classes
-from src.exp_logging import BaseLogger, create_logger
+from src.exp_logging import WandbLogger, MLflowLogger, BaseLogger, create_logger
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -38,7 +37,7 @@ class LogFetcher:
         self.last_checkpoint = None
         self.known_checkpoints = set()
         self.logger = logger
-        
+
     def fetch_new_logs(self):
         """Fetch new logs from the training process."""
         if not self.log_file_path.exists():
@@ -123,12 +122,12 @@ def log_metrics(logger: BaseLogger, logs: List[Dict[str, Any]]):
             logger.log_metrics(metrics)
             logging.info(f"Logged metrics: {metrics}")
             
-        # Log any non-numeric values as separate artifacts if needed
-        for key, value in log_entry.items():
-            if not isinstance(value, (int, float)) and key not in ('step', 'timestamp'):
-                # For complex objects, we could store them as JSON
-                if isinstance(value, dict) or isinstance(value, list):
-                    logger.log_metric(f"{key}_present", 1.0)
+        # # Log any non-numeric values as separate artifacts if needed
+        # for key, value in log_entry.items():
+        #     if not isinstance(value, (int, float)) and key not in ('step', 'timestamp'):
+        #         # For complex objects, we could store them as JSON
+        #         if isinstance(value, dict) or isinstance(value, list):
+        #             logger.log_metric(f"{key}_present", 1.0)
 
 
 
@@ -222,7 +221,7 @@ def upload_checkpoint(
 
         if register_to_registry:
             # Use WandB model registry feature
-            logging.info(f"Registering checkpoint {checkpoint_path} to WandB registry...")
+            logging.info(f"Registering checkpoint {checkpoint_path} to registry...")
             artifact_path = logger.register_model(
                 model_path=str(checkpoint_path),
                 model_name=checkpoint_name,
@@ -231,7 +230,7 @@ def upload_checkpoint(
             )
             
             logging.info(f"Model registered at: {artifact_path}")
-            
+
         
         else:
             # Log the raw directory as an artifact
@@ -326,9 +325,7 @@ def monitor_training(
                     cloud_storage_path=None, 
                     trigger_evaluation=trigger_evaluation
                 )
-                if logger:
-                    logger.log_metric("new_checkpoint", 1.0)
-                    logger.update_summary("latest_checkpoint", checkpoint_name)
+                logger.log_metric("new_checkpoint", 1.0)
                 logging.info(f"New checkpoint processed: {checkpoint_name}")
                 activity_detected |= True
             

@@ -12,6 +12,7 @@ import tempfile
 
 import wandb
 import mlflow
+from mlflow.tracking import MlflowClient
 import logging
 from src.exp_logging import BaseLogger
 from huggingface_hub import snapshot_download
@@ -64,8 +65,11 @@ def download_model_regristry(model_name: str, version: str = None, download_dir:
     elif logger.tracking_backend == 'mlflow':
         # Handle MLflow model download
         if version is None:
-            version = "latest"
-            
+            client = MlflowClient()
+            all_versions = client.get_latest_versions(name=model_name)
+            latest_version = max([int(v.version) for v in all_versions])
+            version = str(latest_version)
+        
         # Set MLflow tracking URI
         mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI"))
         
@@ -75,8 +79,9 @@ def download_model_regristry(model_name: str, version: str = None, download_dir:
         #     f"models:/{model_name}/{version}",
         #     model_name
         # )
+        
         mlflow.artifacts.download_artifacts(
-            artifact_uri=f"models:/{model_name}@{version}" if version else f"models:/{model_name}@latest",
+            artifact_uri=f"models:/{model_name}/{version}" if version else f"models:/{model_name}/{latest_version}",
             dst_path=artifact_dir
         )
     else:
@@ -184,7 +189,7 @@ def create_training_yaml(
         "cutoff_len": cutoff_len,
         "max_samples": max_samples,
         "overwrite_cache": True,
-        "preprocessing_num_workers": 16,
+        "preprocessing_num_workers": 1,
         "dataloader_num_workers": 4,
         
         "output_dir": output_dir,
@@ -203,7 +208,6 @@ def create_training_yaml(
         "bf16": True,
         "ddp_timeout": 180000000,
         "report_to": "none"
-
     }
     
     # Add adapter path if provided

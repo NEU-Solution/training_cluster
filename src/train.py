@@ -26,7 +26,7 @@ def train(
     lora_name: str = None,
     lora_version: str = None,
     lora_hf_repo: str = None,
-    logging_backend: str = "wandb",
+    tracking_backend: str = "wandb",
     adapter_path: str = None,
     **kwargs
 ):
@@ -41,7 +41,7 @@ def train(
 
     adapter_dir =f"models/lora"
 
-    logger = create_logger(logging_backend)
+    logger = create_logger(tracking_backend)
 
     runner = TrainingRunner(
         output_dir= output_dir,
@@ -107,7 +107,7 @@ if __name__ == "__main__":
         batch_size=1,
         gradient_accumulation_steps=2,
         learning_rate='2.0e-5',
-        num_epochs=3.0,
-        logging_backend="wandb",
+        num_epochs=2.0,
+        tracking_backend="mlflow",
         lora_name="initial-sft"
     )

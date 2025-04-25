@@ -1,6 +1,11 @@
 # Training API Curl Examples
 
 Here are curl commands for interacting with all available endpoints in the Training API:
+## Start API service locally
+```bash
+cd training_cluster/api
+uvicorn train_server:app --host 0.0.0.0 --port 23478 --reload
+```
 
 ## Get API Information
 
@@ -18,9 +23,9 @@ curl -X POST http://localhost:23478/train \
   -d '{
     "model_name": "Qwen/Qwen2.5-1.5B-Instruct",
     "lora_name": "initial-sft",
-    "dataset_version": "v1.0",
+    "dataset_version": "v1.0",  
     "template": "qwen",
-    "tracking_backend": "wandb"
+    "logging_backend": "mlflow"
   }'
 ```
 
@@ -39,11 +44,10 @@ curl -X POST http://localhost:23478/train \
     "gradient_accumulation_steps": 2,
     "learning_rate": 2.0e-5,
     "num_epochs": 3.0,
-    "tracking_backend": "wandb",
+    "logging_backend": "wandb",
     "webhook_url": "https://example.com/webhook"
   }'
 ```
-
 
 ### Start a training job with reject strategy
 
@@ -59,7 +63,7 @@ curl -X POST "http://localhost:23478/train?strategy=reject" \
 ### Get status of a specific job
 
 ```bash
-curl -X GET http://localhost:23478/train/550e8400-e29b-41d4-a716-446655440000
+curl -X GET http://localhost:23478/train/9212c3b8-78dd-4f04-8361-bc553fc02c71
 ```
 
 ### Get all training jobs

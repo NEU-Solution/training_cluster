@@ -20,7 +20,7 @@ DEFAULT_CONFIG = {
     "adapter_path": None,
     
     # Tracking configuration
-    "logging_backend": 'wandb',
+    "tracking_backend": 'wandb',
     
     # WandB specific config
     "wandb_project": os.getenv("WANDB_PROJECT"),
@@ -98,7 +98,7 @@ class TrainingRequest(BaseModel):
         default=None,
         description="Path to adapter/LoRA weights to continue training from"
     )
-    logging_backend: TrackingBackend = Field(
+    tracking_backend: TrackingBackend = Field(
         default=TrackingBackend.WANDB,
         description="Backend to use for experiment tracking"
     )

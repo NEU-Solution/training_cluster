@@ -2,9 +2,21 @@ from abc import ABC, abstractmethod
 import pandas as pd
 from typing import Dict, Any, Optional, List, Union
 import logging
+import threading
+
 
 class BaseLogger(ABC):
     """Abstract base class for experiment tracking loggers."""
+    _instances = {}
+    _lock = threading.RLock()
+    
+    def __new__(cls, *args, **kwargs):
+        with cls._lock:
+            if cls not in cls._instances:
+                instance = super(BaseLogger, cls).__new__(cls)
+                cls._instances[cls] = instance
+            return cls._instances[cls]
+    
     @abstractmethod
     def __init__(self, model_name: str = None, lora_name: str = None):
         """
@@ -14,11 +26,13 @@ class BaseLogger(ABC):
             model_name: Name of the model
             lora_name: Name of the LoRA model
         """
-        self.model_name = model_name
-        self.lora_name = lora_name
-        self.config = {}
-        self.tracking_backend = None
-        self.run = None
+        if not hasattr(self, '_initialized'):
+            self._initialized = True
+            self.model_name = model_name
+            self.lora_name = lora_name
+            self.config = {}
+            self.tracking_backend = None
+            self.run = None
 
     @abstractmethod
     def auto_init_run(self):

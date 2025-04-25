@@ -5,18 +5,30 @@ from typing import Dict, Any, Optional, List, Union
 from .base_logger import BaseLogger
 import datetime
 
+from dotenv import load_dotenv
+load_dotenv()
+
+os.environ["AWS_ACCESS_KEY_ID"] = os.getenv("AWS_ACCESS_KEY_ID")
+os.environ["AWS_SECRET_ACCESS_KEY"] = os.getenv("AWS_SECRET_ACCESS_KEY")
+os.environ["MLFLOW_S3_ENDPOINT_URL"] = os.getenv("MLFLOW_S3_ENDPOINT_URL")
+
+
 class MLflowLogger(BaseLogger):
     """MLflow implementation of BaseLogger."""
     
     def __init__(self, model_name: str = None, lora_name: str = None):
+        
+        super().__init__(model_name=model_name, lora_name=lora_name)
+        
         self.tracking_uri = os.getenv("MLFLOW_TRACKING_URI")
-        self.experiment_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "Default")
+        self.experiment_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "evaluate")
         self.run_id = None
+        self.experiment_id = None
         self.tracking_backend = "mlflow"
 
-        self.model_name = model_name
-        self.lora_name = lora_name
         self.config = {}
+
+        
         
     def login(self, **kwargs):
         """Set up MLflow tracking."""
@@ -36,7 +48,9 @@ class MLflowLogger(BaseLogger):
             experiment_id = mlflow.create_experiment(experiment_name)
         else:
             experiment_id = experiment.experiment_id
-            
+        
+        self.experiment_id = experiment_id
+
         # Start the run
         tags = {"job_type": job_type}
         if entity:
@@ -46,12 +60,16 @@ class MLflowLogger(BaseLogger):
             self.model_name = config['model_name']
         if 'lora_name' in config:
             self.lora_name = config['lora_name']
-        
+            
+        mlflow.end_run()
         active_run = mlflow.start_run(
             run_name=name,
             experiment_id=experiment_id,
             tags=tags
         )
+
+        self.run = mlflow.tracking.MlflowClient()
+        
         self.run_id = active_run.info.run_id
         
         # Log the config as parameters
@@ -77,19 +95,23 @@ class MLflowLogger(BaseLogger):
         )
 
     
-    def log_metric(self, key: str, value: Union[float, int]) -> None:
+    def log_metric(self, key: str, value: Union[float, int], **kwargs) -> None:
         """Log a single metric to MLflow."""
         if not self.check_run_status():
             return
         
-        mlflow.log_metric(key, value)
+        self.run.log_metric(run_id = self.run_id, key = key, value=value, **kwargs)
         
     def log_metrics(self, metrics: Dict[str, Union[float, int]]) -> None:
         """Log multiple metrics to MLflow."""
         if not self.check_run_status():
             return
         
-        mlflow.log_metrics(metrics)
+        
+        # print(f"Logging metric {key}: {value}")
+        step = metrics.pop('current_steps', 0)
+        for key, value in metrics.items():
+            self.log_metric(key, value, step=step)
     
     def log_table(self, key: str, dataframe: pd.DataFrame) -> None:
         """Log a dataframe as a table to MLflow."""
@@ -99,7 +121,7 @@ class MLflowLogger(BaseLogger):
         
         temp_path = f"/tmp/{key}.csv"
         dataframe.to_csv(temp_path, index=False)
-        mlflow.log_artifact(temp_path, f"tables/{key}")
+        self.log_artifact(temp_path, f"tables/{key}")
         
         # Clean up
         try:
@@ -122,7 +144,34 @@ class MLflowLogger(BaseLogger):
             return None
         
         artifact_path = name or ""
-        mlflow.log_artifact(local_path, artifact_path)
+        self.run.log_artifact(run_id = self.run_id, local_path = local_path, artifact_path = artifact_path)
+        
+        # Construct the artifact path in MLflow
+        file_name = os.path.basename(local_path)
+        if artifact_path:
+            full_artifact_path = f"{artifact_path}/{file_name}"
+        else:
+            full_artifact_path = file_name
+            
+        return full_artifact_path
+    
+
+    def log_artifacts(self, local_path: str, name: Optional[str] = None, type_ = "file") -> str:
+        """Log an artifact file to MLflow and return the artifact path.
+        
+        Args:
+            local_path: Path to the local file to log
+            name: Optional artifact path to log to within the run
+            type_: Type of artifact (default: "file")
+            
+        Returns:
+            String path to the logged artifact in MLflow
+        """
+        if not self.check_run_status():
+            return None
+        
+        artifact_path = name or ""
+        self.run.log_artifacts(run_id = self.run_id, local_dir = local_path, artifact_path = artifact_path)
         
         # Construct the artifact path in MLflow
         file_name = os.path.basename(local_path)
@@ -151,15 +200,17 @@ class MLflowLogger(BaseLogger):
         if tracking_uri and self.run_id:
             # For hosted MLflow or local server
             if tracking_uri.startswith('http'):
-                return f"{tracking_uri}/#/experiments/{mlflow.active_run().info.experiment_id}/runs/{self.run_id}"
+                return f"{tracking_uri}/#/experiments/{self.experiment_id}/runs/{self.run_id}"
         return None
     
-    def register_model(self, model_path: str, model_name: str = None, tags: Dict[str, Any] = None, collection_name: str = None) -> str:
+    def register_model(self, model_path: str, model_name: str = None, tags: Dict[str, Any] = None, collection_name: str = None,
+                       registry_name: str = "model", **kwargs) -> Optional[str]:
         """Register a model with MLflow Model Registry and optionally add it to a collection.
         
         Args:
             model_path: Path to the model to register
-            model_name: Name to register the model under (defaults to self.model_name if not provided)
+            model_name: Name to register the model under (defaults to self.model_name if not pr
+            ovided)
             tags: Optional dictionary of tags to add to the model
             collection_name: Optional name of the collection to register the model in
             
@@ -170,26 +221,19 @@ class MLflowLogger(BaseLogger):
             return None
         
         # Use provided model_name or fall back to instance model_name
-        name = model_name or self.model_name
+        name = collection_name or self.model_name
         
         if not name:
             raise ValueError("Model name must be provided either in method call or at logger initialization")
         
         # First log the model as an artifact
-        self.log_artifact(model_path, name=model_name, type_="model")
+        self.log_artifacts(model_path, name="model")
         
         # Register the model using the logged artifact
-        model_uri = f"runs:/{self.run_id}/{os.path.basename(model_path)}"
+        model_uri = f"runs:/{self.run_id}/model"
+        print(f"Registering model from {model_uri} with name {name}")
         result = mlflow.register_model(model_uri=model_uri, name=name)
         
-        # Add tags if provided
-        if tags and result:
-            for key, value in tags.items():
-                mlflow.models.set_model_version_tag(name=name, version=result.version, key=key, value=value)
-        
-        # Register model to collection if provided
-        if collection_name:
-            client = mlflow.MlflowClient()
-            client.set_registered_model_alias(name=name, version=result.version, alias=collection_name)
         
         return f"models:/{name}/{result.version}"
+        

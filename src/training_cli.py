@@ -247,7 +247,6 @@ class TrainingRunner:
             logging.info(f"\nError during training: {e}")
             if self.logger:
                 self.logger.log_metric("training_error", 1.0)
-                self.logger.update_summary("error_message", str(e))
             self.kill()
             raise
         
