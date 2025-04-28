@@ -12,6 +12,7 @@ import tempfile
 
 import wandb
 import mlflow
+from mlflow.tracking import MlflowClient
 import logging
 from src.exp_logging import BaseLogger
 from huggingface_hub import snapshot_download
@@ -62,6 +63,94 @@ def download_model_regristry(model_name: str, version: str = None, download_dir:
         artifact_dir = artifact.download(root=download_dir)
 
     elif logger.tracking_backend == 'mlflow':
+        print("Downloading version:", version)
+        # Handle MLflow model download
+        if version is None:
+            client = MlflowClient()
+            all_versions = client.get_latest_versions(name=model_name)
+            latest_version = max([int(v.version) for v in all_versions])
+            version = str(latest_version)
+        
+        # Set MLflow tracking URI
+        mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI"))
+        
+        # Download via MLflow
+        artifact_dir = os.path.join(download_dir, model_name.replace("/", "_"))
+        
+        mlflow.artifacts.download_artifacts(
+            artifact_uri=f"models:/{model_name}/{version}" if version else f"models:/{model_name}/{latest_version}",
+            dst_path=artifact_dir
+        )
+    else:
+        raise ValueError(f"Unsupported logger")
+    
+    logger.set_original_version(version)
+        
+    logging.info(f"Downloaded model {model_name} version {version} to {artifact_dir}")
+    
+    return artifact_dir
+
+
+def download_model_artifact(model_name: str, version: str = 'lastest', download_dir: str = 'models', logger: BaseLogger = None, hf_repo: str = None) -> str:
+    assert model_name, "Model name can not be empty"
+    assert logger, "No logger instance provided"
+
+    # if 'wandb-registry-model' not in model_name:
+    #     model_name = 'wandb-registry-model/' + model_name
+
+    # Initialize a W&B run
+    
+    # Download the model
+
+    download_dir = os.path.join('../', download_dir)
+    os.makedirs(download_dir, exist_ok=True)
+
+    if hf_repo is not None:
+        # Download from Hugging Face Hub
+        artifact_dir = snapshot_download(
+            repo_id=hf_repo,
+            revision=version,
+            cache_dir=download_dir
+        )
+        logging.info(f"Downloaded model from Hugging Face Hub to {artifact_dir}")
+        
+        if version is not None:
+            artifact_dir = os.path.join(artifact_dir, version)
+        
+        return artifact_dir
+    
+    if logger.tracking_backend == 'wandb':
+        # Download the model using wandb API
+        artifact_uri = ""
+        if '/artifact' in model_name:
+            # Handle W&B artifact download
+            artifact_uri = model_name
+        else:
+            if 'wandb-registry' in model_name:
+                # Handle W&B model registry download
+                artifact_uri = artifact_uri
+            else:
+                # Handle W&B model download
+                artifact_uri = f"wandb-registry-model/{model_name}"
+            if version is None or version == "latest":
+                api = wandb.Api()
+                collection_filters = {
+                    "name": {"$regex": "initial-sft"},
+                }
+                versions = api.registries().collections(filter=collection_filters).versions()
+                newest_version = 0
+                for v in versions:
+                    newest_version = max(newest_version, int(v.version[1:]))
+                version = str(newest_version)
+                logging.info(f"Latest version found: {version}")
+
+            artifact_uri = f"{artifact_uri}:{version}"
+
+
+        artifact = wandb.use_artifact(artifact_uri)
+        artifact_dir = artifact.download(root=download_dir)
+        
+    elif logger.tracking_backend == 'mlflow':
         # Handle MLflow model download
         if version is None:
             version = "latest"
@@ -71,20 +160,25 @@ def download_model_regristry(model_name: str, version: str = None, download_dir:
         
         # Download via MLflow
         artifact_dir = os.path.join(download_dir, model_name.replace("/", "_"))
-        registered_model = mlflow.register_model(
-            f"models:/{model_name}/{version}",
-            model_name
-        )
+        
+        if 'models:/' in model_name:
+            artifact_uri = model_name
+        else:
+            if version == "latest":
+                # Get the latest version number
+                mv = logger.run.get_model_version(model_name, 'latest')
+                version = mv.version
+                logging.info(f"Latest version found: {version}")
+
+            
+            artifact_uri = f"models:/{model_name}/{version}"
+
         mlflow.artifacts.download_artifacts(
-            artifact_uri=f"models:/{model_name}/{version}",
+            artifact_uri=artifact_uri,
             dst_path=artifact_dir
         )
-    else:
-        raise ValueError(f"Unsupported logger")
-        
-    logging.info(f"Downloaded model {model_name} version {version} to {artifact_dir}")
-    
-    return artifact_dir
+
+
 
 def create_training_yaml(
     model_name_or_path="Qwen/Qwen2.5-0.5B-Instruct",
@@ -128,7 +222,7 @@ def create_training_yaml(
         "cutoff_len": cutoff_len,
         "max_samples": max_samples,
         "overwrite_cache": True,
-        "preprocessing_num_workers": 16,
+        "preprocessing_num_workers": 1,
         "dataloader_num_workers": 4,
         
         "output_dir": output_dir,
@@ -147,7 +241,6 @@ def create_training_yaml(
         "bf16": True,
         "ddp_timeout": 180000000,
         "report_to": "none"
-
     }
     
     # Add adapter path if provided

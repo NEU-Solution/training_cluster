@@ -16,7 +16,11 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, HttpUrl, Field
 
 # Add parent directory to path for imports
-sys.path.append('..')
+# Add parent directory to path so we can import modules
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(current_dir, '..'))
+sys.path.append(project_root)
+
 from src.train import train
 from src.exp_logging import create_logger
 from const import *
@@ -24,7 +28,6 @@ from utils import load_config_from_yaml
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # Load environment variables
 from dotenv import load_dotenv
@@ -121,21 +124,21 @@ async def run_training_job(job_id: str, config: Dict[str, Any], webhook_url: Opt
     """
     global is_training_running, training_queue
     
-    logging_backend = config["logging_backend"]
+    tracking_backend = config["tracking_backend"]
     logger_instance = None
     tracking_url = None
     
     try:
-        logger.info(f"Starting training job {job_id} with tracking backend: {logging_backend}")
+        logging.info(f"Starting training job {job_id} with tracking backend: {tracking_backend}")
         
         # Initialize the tracking logger
-        logger_instance = create_logger(logging_backend)
+        logger_instance = create_logger(tracking_backend)
         logger_instance.login()
         
         # Initialize tracking run
         run_name = f"api_train_{datetime.datetime.now().strftime('%Y-%m-%d')}_{job_id[:8]}"
         
-        if logging_backend == 'wandb':
+        if tracking_backend == 'wandb':
             import wandb
             wandb.login(key=WANDB_API_KEY)
             run = logger_instance.init_run(
@@ -149,7 +152,7 @@ async def run_training_job(job_id: str, config: Dict[str, Any], webhook_url: Opt
                 tracking_url = wandb.run.get_url()
         else:  # mlflow
             run = logger_instance.init_run(
-                project=config.get("mlflow_experiment_name", "model-training"),
+                project=config.get("mlflow_experiment_name", "training"),
                 job_type="api_training",
                 config=config,
                 name=run_name
@@ -157,12 +160,13 @@ async def run_training_job(job_id: str, config: Dict[str, Any], webhook_url: Opt
             # Get MLflow tracking URL if available
             if hasattr(logger_instance, 'get_tracking_url'):
                 tracking_url = logger_instance.get_tracking_url()
+
+        config['logger'] = logger_instance
         
         # Update job with tracking URL
         training_jobs[job_id]["tracking_url"] = tracking_url
 
         config["learning_rate"] = str(config["learning_rate"])  # Convert to string as expected by train function
-        
         # Run the training in a separate thread to not block the event loop
         loop = asyncio.get_running_loop()
         output_path = await loop.run_in_executor(
@@ -179,7 +183,7 @@ async def run_training_job(job_id: str, config: Dict[str, Any], webhook_url: Opt
             "end_time": time.time()
         })
         
-        logger.info(f"Training job {job_id} completed successfully")
+        logging.info(f"Training job {job_id} completed successfully")
         
         # Send webhook notification if URL was provided
         if webhook_url:
@@ -192,7 +196,7 @@ async def run_training_job(job_id: str, config: Dict[str, Any], webhook_url: Opt
             )
     
     except Exception as e:
-        logger.exception(f"Error in training job {job_id}: {str(e)}")
+        logging.exception(f"Error in training job {job_id}: {str(e)}")
         # Update job status with error
         training_jobs[job_id].update({
             "status": "failed",
@@ -257,9 +261,9 @@ async def send_webhook_notification(webhook_url: HttpUrl, **data):
         async with aiohttp.ClientSession() as session:
             async with session.post(str(webhook_url), json=data) as response:
                 if response.status >= 400:
-                    logger.error(f"Failed to send webhook notification: {response.status} {await response.text()}")
+                    logging.error(f"Failed to send webhook notification: {response.status} {await response.text()}")
     except Exception as e:
-        logger.error(f"Error sending webhook notification: {str(e)}")
+        logging.error(f"Error sending webhook notification: {str(e)}")
 
 @app.get("/train/{job_id}", response_model=TrainingStatus)
 async def get_training_status(job_id: str):

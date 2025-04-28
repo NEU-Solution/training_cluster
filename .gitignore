@@ -139,3 +139,5 @@ LLaMA-Factory/
 .DS_Store 
 test.ipynb
 nvidia_openmath.json
+facebook_reasoning_150.json
+sonnet3.5_science_en.json

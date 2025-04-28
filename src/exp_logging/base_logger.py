@@ -3,8 +3,10 @@ import pandas as pd
 from typing import Dict, Any, Optional, List, Union
 import logging
 
+
 class BaseLogger(ABC):
     """Abstract base class for experiment tracking loggers."""
+    
     @abstractmethod
     def __init__(self, model_name: str = None, lora_name: str = None):
         """
@@ -14,11 +16,14 @@ class BaseLogger(ABC):
             model_name: Name of the model
             lora_name: Name of the LoRA model
         """
+        self._initialized = True
         self.model_name = model_name
         self.lora_name = lora_name
         self.config = {}
         self.tracking_backend = None
         self.run = None
+        self.run_id = None
+        self.original_version = None
 
     @abstractmethod
     def auto_init_run(self):
@@ -107,3 +112,17 @@ class BaseLogger(ABC):
         if not flag:
             logging.warning("No active run detected.")
         return flag
+    
+
+    def set_original_version(self, version: str) -> None:
+        """Set the original version of the model."""
+        self.original_version = version
+
+
+    def update_config(self, config: Dict[str, Any]) -> None:
+        """Update the configuration."""
+        if self.run is not None:
+            self.config.update(config)
+            # self.run.config.update(config)
+        else:
+            logging.warning("No active run to update config.")
