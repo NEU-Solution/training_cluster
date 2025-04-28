@@ -10,6 +10,7 @@ import concurrent.futures
 from typing import Optional, Dict, Any, List, Union
 from enum import Enum
 import uvicorn
+from copy import deepcopy
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Query, status
 from fastapi.responses import JSONResponse
@@ -161,18 +162,21 @@ async def run_training_job(job_id: str, config: Dict[str, Any], webhook_url: Opt
             if hasattr(logger_instance, 'get_tracking_url'):
                 tracking_url = logger_instance.get_tracking_url()
 
-        config['logger'] = logger_instance
         
         # Update job with tracking URL
         training_jobs[job_id]["tracking_url"] = tracking_url
 
         config["learning_rate"] = str(config["learning_rate"])  # Convert to string as expected by train function
+        
+        # pass the logger instance to the training function
+        train_config = deepcopy(config)
+        train_config['logger'] = logger_instance
         # Run the training in a separate thread to not block the event loop
         loop = asyncio.get_running_loop()
         output_path = await loop.run_in_executor(
             thread_pool,
             lambda: train(
-                **config,
+                **train_config,
             )
         )
         
