@@ -6,7 +6,7 @@ sys.path.append('..')
 from src.collecting_data import fake_etl
 from src.preprocess import create_training_yaml, download_model_regristry
 from src.training_cli import TrainingRunner
-from src.exp_logging import create_logger
+from src.exp_logging import create_logger, BaseLogger
 import random
 import string
 
@@ -15,11 +15,13 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 def train(
     model_name: str,
     dataset_version: str,
-    template: str,
     cutoff_len: int,
     max_samples: int,
     batch_size: int,
     gradient_accumulation_steps: int,
+    logger: BaseLogger = None,
+    template: str = "qwen",
+    training_type: str = "sft",
     learning_rate: str = '2.0e-5',
     num_epochs: int = 2.0,
     save_steps: int = 1000,
@@ -28,6 +30,7 @@ def train(
     lora_hf_repo: str = None,
     tracking_backend: str = "wandb",
     adapter_path: str = None,
+    save_name: str = None,
     **kwargs
 ):
     # Pull data from database
@@ -35,30 +38,36 @@ def train(
 
     random_suffix = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
     
-    
     # Relative to the LLama-Factory directory
     output_dir = f"saves/models/lora/sft/{random_suffix}"
 
     adapter_dir =f"models/lora"
 
-    logger = create_logger(tracking_backend)
+    if logger is None:
+        logger = create_logger(tracking_backend)
 
     runner = TrainingRunner(
         output_dir= output_dir,
         logger=logger,
     )
 
+    if save_name is None:
+        save_name = lora_name
+
     training_args = {
         "model_name": model_name,
         "dataset_name": dataset_name,
         "lora_name": lora_name,
         "lora_version": lora_version,
+        'save_name': save_name,
     }
 
     # Start logging
     runner.start_logging(training_args=training_args)
 
-    adapter_path = None
+    # Update logger config
+    logger.update_config(training_args)
+
     if lora_name:
         # Download LoRA weights
         adapter_path = download_model_regristry(
@@ -109,5 +118,6 @@ if __name__ == "__main__":
         learning_rate='2.0e-5',
         num_epochs=2.0,
         tracking_backend="mlflow",
-        lora_name="initial-sft"
+        lora_name="initial-sft",
+        save_name='test_sft'
     )

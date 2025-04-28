@@ -4,6 +4,7 @@ import pandas as pd
 from typing import Dict, Any, Optional, List, Union
 from .base_logger import BaseLogger
 import datetime
+import logging
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -12,6 +13,7 @@ os.environ["AWS_ACCESS_KEY_ID"] = os.getenv("AWS_ACCESS_KEY_ID")
 os.environ["AWS_SECRET_ACCESS_KEY"] = os.getenv("AWS_SECRET_ACCESS_KEY")
 os.environ["MLFLOW_S3_ENDPOINT_URL"] = os.getenv("MLFLOW_S3_ENDPOINT_URL")
 
+import re
 
 class MLflowLogger(BaseLogger):
     """MLflow implementation of BaseLogger."""
@@ -21,7 +23,7 @@ class MLflowLogger(BaseLogger):
         super().__init__(model_name=model_name, lora_name=lora_name)
         
         self.tracking_uri = os.getenv("MLFLOW_TRACKING_URI")
-        self.experiment_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "evaluate")
+        self.experiment_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "training")
         self.run_id = None
         self.experiment_id = None
         self.tracking_backend = "mlflow"
@@ -37,8 +39,30 @@ class MLflowLogger(BaseLogger):
             mlflow.set_tracking_uri(tracking_uri)
             
     def init_run(self, project: str = None, entity: str = None, job_type: str = "experiment",
-                 config: Dict[str, Any] = None, name: Optional[str] = None) -> Any:
-        """Initialize a new MLflow run."""
+                 config: Dict[str, Any] = {}, name: Optional[str] = None) -> Any:
+        """Initialize a new MLflow run. If a run is already active, it will be reused. Always update the config."""
+        
+        # Start the run
+        tags = {"job_type": job_type}
+        if entity:
+            tags["entity"] = entity
+
+        self.update_config(config)
+
+        if 'model_name' in config:
+            self.model_name = config['model_name']
+        if 'lora_name' in config:
+            self.lora_name = config['lora_name']
+        if 'save_name' in config:
+            self.save_name = config['save_name']
+        else:
+            self.save_name = config.get('lora_name', self.lora_name)
+
+
+        if self.run is not None or self.run_id is not None:
+            logging.warning("Run already initialized. Please finish the current run before starting a new one.")
+            return self.run
+        
         # Use project as experiment name if provided
         experiment_name = project or self.experiment_name
         
@@ -51,25 +75,14 @@ class MLflowLogger(BaseLogger):
         
         self.experiment_id = experiment_id
 
-        # Start the run
-        tags = {"job_type": job_type}
-        if entity:
-            tags["entity"] = entity
-
-        if 'model_name' in config:
-            self.model_name = config['model_name']
-        if 'lora_name' in config:
-            self.lora_name = config['lora_name']
             
-        mlflow.end_run()
         active_run = mlflow.start_run(
-            run_name=name,
-            experiment_id=experiment_id,
-            tags=tags
-        )
+                run_name=name,
+                experiment_id=experiment_id,
+                tags=tags
+            )
 
         self.run = mlflow.tracking.MlflowClient()
-        
         self.run_id = active_run.info.run_id
         
         # Log the config as parameters
@@ -77,8 +90,9 @@ class MLflowLogger(BaseLogger):
             for key, value in config.items():
                 if isinstance(value, (str, int, float, bool)):
                     mlflow.log_param(key, value)
-                    
-        return active_run
+
+        logging.info(f"MLflow run initialized with ID: {self.run_id}")    
+        return self.run
     
 
     def auto_init_run(self, config = None):
@@ -191,7 +205,9 @@ class MLflowLogger(BaseLogger):
     
     def finish_run(self) -> None:
         """End the current MLflow run."""
+        logging.info(f"Finishing MLflow run with ID: {self.run_id}")
         mlflow.end_run()
+        self.run = None
         self.run_id = None
 
     def get_tracking_url(self) -> Optional[str]:
@@ -221,19 +237,44 @@ class MLflowLogger(BaseLogger):
             return None
         
         # Use provided model_name or fall back to instance model_name
-        name = collection_name or self.model_name
+        base_name = collection_name or self.model_name
+        save_name = self.save_name
         
-        if not name:
+        if not base_name:
             raise ValueError("Model name must be provided either in method call or at logger initialization")
         
+        checkpoint_name = os.path.basename(model_path)
+
         # First log the model as an artifact
-        self.log_artifacts(model_path, name="model")
+        self.log_artifacts(model_path, name=f"model/{checkpoint_name}")
         
         # Register the model using the logged artifact
-        model_uri = f"runs:/{self.run_id}/model"
-        print(f"Registering model from {model_uri} with name {name}")
-        result = mlflow.register_model(model_uri=model_uri, name=name)
+        model_uri = f"runs:/{self.run_id}/model/{checkpoint_name}"
+        print(f"Registering model from {model_uri} with name {save_name}")
+        # Register model with provided URI and name
+        result = mlflow.register_model(model_uri=model_uri, name=save_name)
+        
+        # Add tags to the registered model version if provided
+        
+        pattern = r"checkpoint-([0-9]+)"
+        number = re.search(pattern, checkpoint_name)
+        if number:
+            checkpoint_number = int(number.group(1))
+            self.run.set_model_version_tag(name=save_name, version=result.version, 
+                               key="checkpoint", value=checkpoint_number)
+
+        if self.original_version.isdigit():
+            self.run.set_model_version_tag(name=save_name, version=result.version, 
+                               key="original", value=f"{base_name}-v{self.original_version}")
+
+        self.run.set_model_version_tag(name=save_name, version=result.version, 
+                                        key="evaluate", value=f"pending")
+
+        # # Set an alias for the model version if provided in kwargs
+        # if 'alias' in kwargs:
+        #     alias = kwargs.get('alias')
+        #     self.run.set_registered_model_alias(name=name, alias=alias, version=result.version)
         
         
-        return f"models:/{name}/{result.version}"
+        return f"models:/{save_name}/{result.version}"
         

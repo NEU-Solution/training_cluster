@@ -25,6 +25,23 @@ from src.exp_logging import WandbLogger, MLflowLogger, BaseLogger, create_logger
 from dotenv import load_dotenv
 load_dotenv()
 
+
+from pydantic import BaseModel, Field
+from typing import Optional, Dict, Any, Union
+
+
+class EvaluationRequest(BaseModel):
+    base_model_name: str
+    lora_model_name: str
+    data_version: str = "latest"
+    lora_version: Optional[str] = "latest"
+    multi_thread: bool = True
+    llm_backend: str = 'vllm'
+    tracking_backend: str = 'mlflow'
+    train_id: Optional[str] = None
+
+
+
 class LogFetcher:
     def __init__(self, 
                  log_file_path, 
@@ -87,6 +104,7 @@ class LogFetcher:
 
         newest_checkpoints = []
 
+        # Need to add condition of having safetensors
         for checkpoint in checkpoints:
             if checkpoint not in self.known_checkpoints:
                 newest_checkpoints.append(checkpoint)
@@ -131,7 +149,14 @@ def log_metrics(logger: BaseLogger, logs: List[Dict[str, Any]]):
 
 
 
-def send_evaluation_request(base_model_name, lora_model_name, eval_server_url=None):
+def send_evaluation_request(base_model_name: str, 
+                            lora_model_name: str,
+                            data_version: str = "latest", 
+                            tracking_backend: str = 'mlflow', 
+                            eval_server_url: Optional[str] = None,
+                            train_id: Optional[str] = None,
+                            **kwargs: Dict[str, Any]
+                            ):
     """
     Send an API request to the evaluation server for a new model checkpoint.
     
@@ -145,11 +170,20 @@ def send_evaluation_request(base_model_name, lora_model_name, eval_server_url=No
     
 
 
-    payload = {
+    payload_params = {
         "base_model_name": base_model_name,
         "lora_model_name": lora_model_name,
-        "tracking_backend": os.getenv("TRACKING_BACKEND", "wandb"),
+        "tracking_backend": tracking_backend,
+        "data_version": data_version,
+        "train_id": train_id,
     }
+    # Add any additional parameters from kwargs
+    for key, value in kwargs.items():
+        if key not in payload_params:
+            payload_params[key] = value
+    
+    # Create the payload
+    payload = EvaluationRequest(**payload_params).dict()
     
     def _send_request():
         logging.info(f"Sending evaluation request to {eval_server_url} for {lora_model_name}")
@@ -185,7 +219,8 @@ def upload_checkpoint(
     collection_name: str = None,
     registry_name: str = "model",
     checkpoint_name: str = None,
-    trigger_evaluation: bool = True
+    trigger_evaluation: bool = True,
+    run_in_background: bool = True
 ) -> Optional[str]:
     """
     Upload checkpoint to tracking system and optionally to cloud storage
@@ -194,10 +229,11 @@ def upload_checkpoint(
         logger: BaseLogger instance
         checkpoint_path: Path to the checkpoint directory
         cloud_storage_path: Optional cloud storage path
-        compress: Whether to compress the checkpoint as a tarball (True) or upload raw (False)
+        register_to_registry: Whether to register the model in the registry
+        run_in_background: Whether to run the upload in a background thread
         
     Returns:
-        Name of the uploaded checkpoint or None if failed
+        Name of the checkpoint (immediately) or None if invalid parameters
     """
     if not logger:
         logging.warning(f"No logger configured, skipping checkpoint upload: {checkpoint_path}")
@@ -207,7 +243,7 @@ def upload_checkpoint(
     checkpoint_name = checkpoint_path.name if not checkpoint_name else checkpoint_name
 
     # Delete optimizer.pt file if it exists in the folder
-    optimizer_file = Path(os.path.join(checkpoint_path , "optimizer.pt"))
+    optimizer_file = Path(os.path.join(checkpoint_path, "optimizer.pt"))
     if optimizer_file.exists():
         logging.info(f"Deleting optimizer file: {optimizer_file}")
         optimizer_file.unlink()
@@ -215,49 +251,61 @@ def upload_checkpoint(
     if not collection_name:
         collection_name = os.getenv("WANDB_REGISTRY", "default")
     
-    try:
+    # Define the upload function to run in background
+    def _upload_process():
+        try:
+            artifact_path = ""
 
-        artifact_path = ""
+            if register_to_registry:
+                # Use WandB model registry feature
+                logging.info(f"Registering checkpoint {checkpoint_path} to registry...")
+                artifact_path = logger.register_model(
+                    model_path=str(checkpoint_path),
+                    model_name=checkpoint_name,
+                    collection_name=collection_name,
+                    registry_name=registry_name
+                )
+                
+                logging.info(f"Model registered at: {artifact_path}")
+            else:
+                # Log the raw directory as an artifact
+                logging.info(f"Uploading raw checkpoint directory {checkpoint_path}...")
+                artifact_path = logger.log_directory(str(checkpoint_path), 
+                                                    name=f"{logger.config.get('lora_name','')}-{checkpoint_name}", 
+                                                    type_="model")
+                logging.info(f"Raw checkpoint {logger.config.get('lora_name','')}-{checkpoint_name} uploaded to tracking system")
 
-        if register_to_registry:
-            # Use WandB model registry feature
-            logging.info(f"Registering checkpoint {checkpoint_path} to registry...")
-            artifact_path = logger.register_model(
-                model_path=str(checkpoint_path),
-                model_name=checkpoint_name,
-                collection_name=collection_name,
-                registry_name=registry_name
-            )
+            # Additional cloud storage upload if needed
+            if cloud_storage_path:
+                logging.info(f"Uploading checkpoint to cloud storage: {cloud_storage_path}")
+                # Cloud upload implementation would go here
+
+            # Trigger evaluation if needed
+            if trigger_evaluation and logger.config.get("model_name"):
+                print("================= TRIGGERING EVAL =================")
+                send_evaluation_request(
+                    base_model_name=logger.config.get("model_name"),
+                    lora_model_name=artifact_path,
+                    data_version=logger.config.get("data_version", "latest"),
+                    tracking_backend=logger.tracking_backend,
+                    train_id=logger.run_id,
+                )
+                
+            logger.log_metric("checkpoint_upload_complete", 1.0)
             
-            logging.info(f"Model registered at: {artifact_path}")
+        except Exception as e:
+            logging.error(f"Error uploading checkpoint: {e}")
 
-        
-        else:
-            # Log the raw directory as an artifact
-            logging.info(f"Uploading raw checkpoint directory {checkpoint_path}...")
-            artifact_path = logger.log_directory(str(checkpoint_path), name=f"{logger.config.get("lora_name","")}-{checkpoint_name}", type_="model")
-            logging.info(f"Raw checkpoint {logger.lora_name}-{checkpoint_name} uploaded to tracking system")
-
-
-        # Additional cloud storage upload if needed
-        if cloud_storage_path:
-            # Placeholder for cloud upload
-            logging.info(f"Uploading checkpoint to cloud storage: {cloud_storage_path}")
-            # This would typically use cloud SDK (AWS S3, GCP, etc.)
-
-        # Trigger evaluation if needed
-        if trigger_evaluation and logger.config.get("model_name") :
-            print ("================= TRIGGERING EVAL =================")
-            send_evaluation_request(
-                base_model_name=logger.config.get("model_name"),
-                lora_model_name=artifact_path,
-            )
-        
-        return checkpoint_name
+    # Run in background or foreground based on parameter
+    if run_in_background:
+        thread = threading.Thread(target=_upload_process)
+        thread.daemon = True
+        thread.start()
+        logging.info(f"Started background upload for checkpoint: {checkpoint_name}")
+    else:
+        _upload_process()
     
-    except Exception as e:
-        logging(f"Error uploading checkpoint: {e}")
-        return None
+    return checkpoint_name
 
 
 def scrape_log(fetcher: LogFetcher, **kwargs):
@@ -296,7 +344,6 @@ def monitor_training(
     # fetcher = LogFetcher(log_file, logger=logger, checkpoint_dir=checkpoint_dir)
     
 
-    had_activity = False
     logger = fetcher.logger
     if not logger:
         logging.warning("No logger configured, skipping monitoring")
@@ -323,16 +370,15 @@ def monitor_training(
                 checkpoint_name = upload_checkpoint(
                     logger, new_checkpoint, 
                     cloud_storage_path=None, 
-                    trigger_evaluation=trigger_evaluation
+                    trigger_evaluation=trigger_evaluation,
+                    run_in_background=True
                 )
                 logger.log_metric("new_checkpoint", 1.0)
                 logging.info(f"New checkpoint processed: {checkpoint_name}")
                 activity_detected |= True
             
-            had_activity = activity_detected
-
-            if had_activity:
-                activity_detected = 0
+            if activity_detected:
+                not_update_count = 0
             else:
                 not_update_count += 1
                 logging.info(f"No updates detected for {not_update_count * interval} seconds")

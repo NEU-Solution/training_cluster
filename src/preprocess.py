@@ -63,6 +63,7 @@ def download_model_regristry(model_name: str, version: str = None, download_dir:
         artifact_dir = artifact.download(root=download_dir)
 
     elif logger.tracking_backend == 'mlflow':
+        print("Downloading version:", version)
         # Handle MLflow model download
         if version is None:
             client = MlflowClient()
@@ -75,10 +76,6 @@ def download_model_regristry(model_name: str, version: str = None, download_dir:
         
         # Download via MLflow
         artifact_dir = os.path.join(download_dir, model_name.replace("/", "_"))
-        # registered_model = mlflow.register_model(
-        #     f"models:/{model_name}/{version}",
-        #     model_name
-        # )
         
         mlflow.artifacts.download_artifacts(
             artifact_uri=f"models:/{model_name}/{version}" if version else f"models:/{model_name}/{latest_version}",
@@ -86,13 +83,15 @@ def download_model_regristry(model_name: str, version: str = None, download_dir:
         )
     else:
         raise ValueError(f"Unsupported logger")
+    
+    logger.set_original_version(version)
         
     logging.info(f"Downloaded model {model_name} version {version} to {artifact_dir}")
     
     return artifact_dir
 
 
-def download_model_artifact(model_name: str, version: str = None, download_dir: str = 'models', logger: BaseLogger = None, hf_repo: str = None) -> str:
+def download_model_artifact(model_name: str, version: str = 'lastest', download_dir: str = 'models', logger: BaseLogger = None, hf_repo: str = None) -> str:
     assert model_name, "Model name can not be empty"
     assert logger, "No logger instance provided"
 
@@ -122,10 +121,35 @@ def download_model_artifact(model_name: str, version: str = None, download_dir: 
     
     if logger.tracking_backend == 'wandb':
         # Download the model using wandb API
-        artifact = wandb.use_artifact(
-            f"{logger.entity}/{logger.project}/{model_name}:{version}" if version else f"{logger.entity}/{logger.project}/{model_name}:latest"
-        )
+        artifact_uri = ""
+        if '/artifact' in model_name:
+            # Handle W&B artifact download
+            artifact_uri = model_name
+        else:
+            if 'wandb-registry' in model_name:
+                # Handle W&B model registry download
+                artifact_uri = artifact_uri
+            else:
+                # Handle W&B model download
+                artifact_uri = f"wandb-registry-model/{model_name}"
+            if version is None or version == "latest":
+                api = wandb.Api()
+                collection_filters = {
+                    "name": {"$regex": "initial-sft"},
+                }
+                versions = api.registries().collections(filter=collection_filters).versions()
+                newest_version = 0
+                for v in versions:
+                    newest_version = max(newest_version, int(v.version[1:]))
+                version = str(newest_version)
+                logging.info(f"Latest version found: {version}")
+
+            artifact_uri = f"{artifact_uri}:{version}"
+
+
+        artifact = wandb.use_artifact(artifact_uri)
         artifact_dir = artifact.download(root=download_dir)
+        
     elif logger.tracking_backend == 'mlflow':
         # Handle MLflow model download
         if version is None:
@@ -136,12 +160,21 @@ def download_model_artifact(model_name: str, version: str = None, download_dir: 
         
         # Download via MLflow
         artifact_dir = os.path.join(download_dir, model_name.replace("/", "_"))
-        # registered_model = mlflow.register_model(
-        #     f"models:/{model_name}/{version}",
-        #     model_name
-        # )
+        
+        if 'models:/' in model_name:
+            artifact_uri = model_name
+        else:
+            if version == "latest":
+                # Get the latest version number
+                mv = logger.run.get_model_version(model_name, 'latest')
+                version = mv.version
+                logging.info(f"Latest version found: {version}")
+
+            
+            artifact_uri = f"models:/{model_name}/{version}"
+
         mlflow.artifacts.download_artifacts(
-            artifact_uri=f"runs:/{logger.run_id}/model",
+            artifact_uri=artifact_uri,
             dst_path=artifact_dir
         )
 

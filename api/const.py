@@ -14,7 +14,7 @@ DEFAULT_CONFIG = {
     "cutoff_len": 2048,
     "max_samples": 10000,
     "batch_size": 1,
-    "gradient_accumulation_steps": 2,
+    "gradient_accumulation_steps": 8,
     "learning_rate": '2.0e-5',
     "num_epochs": 3.0,
     "adapter_path": None,
@@ -28,7 +28,7 @@ DEFAULT_CONFIG = {
     
     # MLflow specific config
     "mlflow_tracking_uri": os.getenv("MLFLOW_TRACKING_URI"),
-    "mlflow_experiment_name": os.getenv("MLFLOW_EXPERIMENT_NAME", "model-training"),
+    "mlflow_experiment_name": os.getenv("MLFLOW_EXPERIMENT_NAME", "training"),
 }
 
 # Enums for API options
@@ -70,6 +70,10 @@ class TrainingRequest(BaseModel):
         default=DEFAULT_CONFIG["gradient_accumulation_steps"],
         description="Number of gradient accumulation steps"
     )
+    training_type: str = Field(
+        default="sft",
+        description="Type of training to perform (e.g., SFT, DPO)"
+    )
     learning_rate: str = Field(
         default=DEFAULT_CONFIG["learning_rate"],
         description="Learning rate for training"
@@ -101,6 +105,10 @@ class TrainingRequest(BaseModel):
     tracking_backend: TrackingBackend = Field(
         default=TrackingBackend.WANDB,
         description="Backend to use for experiment tracking"
+    )
+    save_name: Optional[str] = Field(
+        default=None,
+        description="Name to save the model (Collection name)"
     )
     webhook_url: Optional[HttpUrl] = Field(
         default=None,

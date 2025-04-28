@@ -14,10 +14,11 @@ class WandbLogger(BaseLogger):
         super().__init__(model_name=model_name, lora_name=lora_name)
 
         self.run = None
-        self.api_key = os.getenv("WANDB_API_KEY")
+        self._api_key = os.getenv("WANDB_API_KEY")
         self.project = os.getenv("WANDB_PROJECT")
         self.entity = os.getenv("WANDB_ENTITY")
         self.tracking_backend = "wandb"
+        wandb.login(key=self._api_key)
 
         self.config = {}
         
@@ -27,9 +28,26 @@ class WandbLogger(BaseLogger):
         wandb.login(key=key)
         
     def init_run(self, project: str = None, entity: str = None, job_type: str = "experiment", 
-                 config: Dict[str, Any] = None, name: Optional[str] = None) -> Any:
+                 config: Dict[str, Any] = {}, name: Optional[str] = None, run_id = None) -> Any:
         """Initialize a new WandB run."""
         
+        self.update_config(config)
+
+        if 'model_name' in config:
+            self.model_name = config['model_name']
+        if 'lora_name' in config:
+            self.lora_name = config['lora_name']
+        if 'save_name' in config:
+            self.save_name = config['save_name']
+        else:
+            self.save_name = config.get('lora_name', self.lora_name)
+
+
+        if self.run is not None or self.run_id is not None:
+            logging.warning("Run already initialized. Please finish the current run before starting a new one.")
+            return self.run
+
+
         if project:
             self.project = project
         if entity:
@@ -39,32 +57,32 @@ class WandbLogger(BaseLogger):
         if config:
             self.config = config
 
-        if 'model_name' in config:
-            self.model_name = config['model_name']
-        if 'lora_name' in config:
-            self.lora_name = config['lora_name']
-
-        self.run = wandb.init(
-            project=project or self.project,
-            entity=entity or self.entity,
-            job_type=job_type,
-            config=config,
-            name=name
-        )
+        
+        if run_id:
+            logging.info(f"Resuming run with ID: {run_id}")
+            self.run = wandb.init(
+                id=run_id,
+                resume="allow",
+            )
+        else:
+            self.run = wandb.init(
+                project=project or self.project,
+                entity=entity or self.entity,
+                job_type=job_type,
+                config=config,
+                name=name
+            )
         self.run_name = self.run.name
         return self.run
     
     def auto_init_run(self, config = None):
         """Automatically initialize a WandB run with default parameters."""
         project = os.getenv("WANDB_PROJECT", "training")
-        entity = os.getenv("WANDB_ENTITY", None)
-        job_type = os.getenv("WANDB_JOB_TYPE", "training")
+        
         config = config or {}
 
         self.init_run(
             project=project,
-            entity=entity,
-            job_type=job_type,
             config=config,
             name=f"{project}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
         )
@@ -115,6 +133,7 @@ class WandbLogger(BaseLogger):
         if self.run:
             self.run.finish()
             self.run = None
+            self.run_id = None
 
     def get_tracking_url(self) -> Optional[str]:
         """Get URL to the current run in WandB UI."""

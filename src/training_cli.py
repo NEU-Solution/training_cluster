@@ -10,9 +10,14 @@ import datetime
 from dotenv import load_dotenv
 
 import sys 
-sys.path.append('..')
+
+# Add parent directory to path so we can import modules
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(current_dir, '..'))
+sys.path.append(project_root)
+
 # Import logger and monitoring functionality
-from src.fetch_logs import monitor_training, scrape_log, LogFetcher
+from src.monitor import monitor_training, scrape_log, LogFetcher
 from src.exp_logging import BaseLogger, create_logger
 import logging
 import threading
@@ -20,7 +25,6 @@ import threading
 # Load environment variables
 load_dotenv()
 
-current_dir = os.path.dirname(os.path.abspath(__file__))
 
 class TrainingRunner:
     def __init__(self, output_dir="saves", tracking_backend:str = None, logger=None):
@@ -101,8 +105,22 @@ class TrainingRunner:
             stderr=subprocess.PIPE,
             stdout=subprocess.PIPE,
             universal_newlines=True,
+            preexec_fn=os.setsid,  # This allows us to terminate the process group later
+            bufsize=1,  # Line buffered
+            env=os.environ.copy()
             # cwd=os.path.join(current_dir, '../LLaMA-Factory'),
         )
+
+        def log_output(pipe, prefix):
+            for line in iter(pipe.readline, ''):
+                logging.info(f"{prefix}: {line.strip()}")
+
+        stdout_thread = threading.Thread(target=log_output, args=(self.process.stdout, "SERVER-OUT"))
+        stderr_thread = threading.Thread(target=log_output, args=(self.process.stderr, "SERVER-ERR"))
+        stdout_thread.daemon = True
+        stderr_thread.daemon = True
+        stdout_thread.start()
+        stderr_thread.start()
         
         # Log the process start
         self.logger.log_metric("training_started", 1.0)
