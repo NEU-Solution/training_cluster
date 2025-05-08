@@ -135,9 +135,9 @@ temp/
 models/
 wandb/
 LLaMA-Factory/
+mlruns/
 
 .DS_Store 
 test.ipynb
-nvidia_openmath.json
-facebook_reasoning_150.json
-sonnet3.5_science_en.json
+qwen2.5_chat_1.json
+qwen2.5_chat_2.json

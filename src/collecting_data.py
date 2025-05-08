@@ -10,6 +10,8 @@ def fake_etl(*args, **kwargs) -> list[str]:
     """
     Store fake data from example folder into a json file
     """
+
+    # pull_messages -> luu file json
     
     data_files = []
 

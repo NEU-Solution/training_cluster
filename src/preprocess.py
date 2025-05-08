@@ -193,7 +193,8 @@ def create_training_yaml(
     gradient_accumulation_steps=8,
     learning_rate='2.0e-5',
     num_epochs=2.0,
-    lora_rank=64
+    lora_rank=64,
+    stage="sft",
 ):
     """
     Create a YAML configuration file for LLaMA-Factory training.
@@ -216,6 +217,7 @@ def create_training_yaml(
         "finetuning_type": "lora",
         "lora_rank": lora_rank,
         "lora_target": "all",
+        "stage": stage,
         
         "dataset": ",".join(dataset_names),
         "template": template,
@@ -247,6 +249,11 @@ def create_training_yaml(
     if adapter_name_or_path:
         config["adapter_name_or_path"] = adapter_name_or_path
     
+    if stage in ['dpo', 'kto']:
+        config['perf_beta'] = 0.1
+        if stage == 'dpo':
+            config['perf_loss'] = 'sigmoid'
+
     # Create temp directory if not provided
     os.makedirs(os.path.join(current_dir, '../temp'), exist_ok=True)
     

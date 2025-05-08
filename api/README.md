@@ -64,19 +64,19 @@ curl -X POST http://localhost:23478/train \
   -H "Content-Type: application/json" \
   -d '{
     "model_name": "Qwen/Qwen2.5-1.5B-Instruct",
-    "lora_name": "initial-sft",
-    "lora_version": "2",
-    "dataset_version": "v1.0",
+    "lora_name": "pretrain",
+    "lora_version": "1",
+    "dataset_version": "v2.0",
     "template": "qwen",
-    "cutoff_len": 2048,
-    "max_samples": 10000,
+    "cutoff_len": 4096,
+    "max_samples": 50000,
     "batch_size": 1,
     "gradient_accumulation_steps": 8,
-    "save_steps": 501,
+    "save_steps": 2001,
     "learning_rate": "2.0e-5",
     "num_epochs": 2.0,
     "tracking_backend": "mlflow",
-    "save_name": "test_reasoning"
+    "save_name": "sft-v4"
   }'
 ```
 
