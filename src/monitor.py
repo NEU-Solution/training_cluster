@@ -349,10 +349,12 @@ def monitor_training(
         logging.warning("No logger configured, skipping monitoring")
         return
     
-    max_not_update = int(stall_timeout / interval)
+    max_not_update = int(stall_timeout / interval) * 5
     max_not_update_after_training = int(upload_timeout / interval)
     not_update_count = 0
     
+    had_activity = False
+
     try:
         while True:
             
@@ -376,6 +378,14 @@ def monitor_training(
                 logger.log_metric("new_checkpoint", 1.0)
                 logging.info(f"New checkpoint processed: {checkpoint_name}")
                 activity_detected |= True
+            
+
+            # If not started training yet, increase the count for stall condition
+            had_activity |= activity_detected
+
+            # If we have had activity, we can reset the stall timeout
+            if had_activity:
+                max_not_update = int(stall_timeout / interval)
             
             if activity_detected:
                 not_update_count = 0

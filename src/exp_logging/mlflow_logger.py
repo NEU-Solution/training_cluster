@@ -64,7 +64,7 @@ class MLflowLogger(BaseLogger):
             return self.run
         
         # Use project as experiment name if provided
-        experiment_name = project or self.experiment_name
+        experiment_name = project
         
         # Get or create the experiment
         experiment = mlflow.get_experiment_by_name(experiment_name)
@@ -133,15 +133,22 @@ class MLflowLogger(BaseLogger):
         if not self.check_run_status():
             return
         
-        temp_path = f"/tmp/{key}.csv"
-        dataframe.to_csv(temp_path, index=False)
-        self.log_artifact(temp_path, f"tables/{key}")
+        if not key.endswith(".json"):
+            key = f"{key}.json"
+
+        run_id  = self.get_run_id(run_id)
+        if run_id:
+            self.run.log_table(run_id = run_id, data = dataframe, artifact_file = key)
         
-        # Clean up
-        try:
-            os.remove(temp_path)
-        except:
-            pass
+        # temp_path = f"/tmp/{key}.csv"
+        # dataframe.to_csv(temp_path, index=False)
+        # self.log_artifact(temp_path, f"tables/{key}")
+        
+        # # Clean up
+        # try:
+        #     os.remove(temp_path)
+        # except:
+        #     pass
     
     def log_artifact(self, local_path: str, name: Optional[str] = None, type_ = "file") -> str:
         """Log an artifact file to MLflow and return the artifact path.

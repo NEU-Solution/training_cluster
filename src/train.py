@@ -39,7 +39,7 @@ def train(
     random_suffix = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
     
     # Relative to the LLama-Factory directory
-    output_dir = f"saves/models/lora/sft/{random_suffix}"
+    output_dir = f"saves/models/lora/{training_type}/{random_suffix}"
 
     adapter_dir =f"models/lora"
 
@@ -92,6 +92,8 @@ def train(
         num_epochs=num_epochs,
         output_dir=output_dir,
         adapter_name_or_path=adapter_path,
+        stage=training_type,
+        **kwargs
     )
     # Create training runner
 
@@ -111,10 +113,10 @@ if __name__ == "__main__":
         dataset_version="v1.0",
         template="qwen",
         cutoff_len=2048,
-        max_samples=1000,
+        max_samples=50000,
         save_steps=200,
         batch_size=1,
-        gradient_accumulation_steps=2,
+        gradient_accumulation_steps=8,
         learning_rate='2.0e-5',
         num_epochs=2.0,
         tracking_backend="mlflow",
