@@ -2,6 +2,9 @@
 
 For API documentation, check [here](api/README.md)
 
+## Architecture Diagrams
+![Architecture Diagram](./assets/diagrams.png)
+
 ## Setup
 
 You can run the training server under `Docker` image.
