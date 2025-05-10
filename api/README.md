@@ -63,7 +63,7 @@ curl -X POST http://localhost:23478/train \
 curl -X POST http://localhost:23478/train \
   -H "Content-Type: application/json" \
   -d '{
-    "model_name": "Qwen/Qwen2.5-1.5B-Instruct",
+    "model_name": "Qwen/Qwen3-1.7B",
     "lora_name": "pretrain",
     "lora_version": "1",
     "dataset_version": "v2.0",

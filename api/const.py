@@ -8,10 +8,10 @@ from enum import Enum
 DEFAULT_CONFIG = {
     # Model configuration
     "model_name": "Qwen/Qwen2.5-1.5B-Instruct",
-    "lora_name": "initial-sft",
+    "lora_name": "None",
     "dataset_version": "v1.0",
     "template": "qwen",
-    "cutoff_len": 2048,
+    "cutoff_len": 8192,
     "max_samples": 10000,
     "batch_size": 1,
     "gradient_accumulation_steps": 8,
