@@ -349,7 +349,7 @@ def monitor_training(
         logging.warning("No logger configured, skipping monitoring")
         return
     
-    max_not_update = int(stall_timeout / interval) * 5
+    max_not_update = int(stall_timeout / interval) * 8
     max_not_update_after_training = int(upload_timeout / interval)
     not_update_count = 0
     

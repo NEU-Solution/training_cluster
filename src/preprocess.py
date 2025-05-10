@@ -24,6 +24,10 @@ def download_model_regristry(model_name: str, version: str = None, download_dir:
     Download a model from the WandB model registry.
     """
 
+    if model_name is None or model_name == "None":
+        logging.warning("Model name is None or 'None'. Skipping download.")
+        return None
+
     assert model_name, "Model name can not be empty"
     assert logger, "No logger instance provided"
 
