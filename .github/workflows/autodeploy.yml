@@ -40,6 +40,7 @@ jobs:
             git pull origin main
             tmux attach -t training_cluster || tmux new -s training_cluster
             pkill -f "uvicorn"
+            conda activate evaluate
             uvicorn train_server:app --host 0.0.0.0 --port 23478 --reload
             exit
           EOF
