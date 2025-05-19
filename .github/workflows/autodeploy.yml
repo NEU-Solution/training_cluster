@@ -1,0 +1,39 @@
+name: Deploy and Restart API
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install Cloudflare CLI
+        run: |
+          sudo apt update
+          sudo apt install -y cloudflared
+
+      - name: Configure SSH
+        run: |
+          echo "Host quanghung" >> ~/.ssh/config
+          echo "    HostName ${{ secrets.SERVER_HOST }}" >> ~/.ssh/config
+          echo "    User ${{ secrets.SERVER_USER }}" >> ~/.ssh/config
+          echo "    ProxyCommand /usr/bin/cloudflared access ssh --hostname %h" >> ~/.ssh/config
+
+      - name: SSH into Server and Restart API
+        uses: appleboy/ssh-action@v0.1.9
+        with:
+          host: quanghung
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            tmux attach -t training_cluster || tmux new -s training_cluster
+            cd training_cluster/api
+            git pull origin main
+            pkill -f "uvicorn"
+            uvicorn train_server:app --host 0.0.0.0 --port 23478 --reload
+            exit
