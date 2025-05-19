@@ -18,11 +18,13 @@ This API allows you to:
 cd training_cluster/api
 uvicorn train_server:app --host 0.0.0.0 --port 23478 --reload
 ```
+Now the API service should be on http://localhost:23478
+For the completion of the project, it is published as https://train_api.quanghung20gg.site
 
 ## Get API Information
 
 ```bash
-curl -X GET http://localhost:23478/
+curl -X GET https://train_api.quanghung20gg.site
 ```
 
 ## Training Management Commands
@@ -45,7 +47,7 @@ Key training parameters include:
 ### Start a new training job (basic)
 
 ```bash
-curl -X POST http://localhost:23478/train \
+curl -X POST https://train_api.quanghung20gg.site/train \
   -H "Content-Type: application/json" \
   -d '{
     "model_name": "Qwen/Qwen2.5-1.5B-Instruct",
@@ -60,7 +62,7 @@ curl -X POST http://localhost:23478/train \
 ### Start a training job with all parameters
 
 ```bash
-curl -X POST http://localhost:23478/train \
+curl -X POST https://train_api.quanghung20gg.site/train \
   -H "Content-Type: application/json" \
   -d '{
     "model_name": "Qwen/Qwen3-1.7B",
@@ -83,7 +85,7 @@ curl -X POST http://localhost:23478/train \
 ### Start a training job with reject strategy
 
 ```bash
-curl -X POST "http://localhost:23478/train?strategy=reject" \
+curl -X POST "https://train_api.quanghung20gg.site/train?strategy=reject" \
   -H "Content-Type: application/json" \
   -d '{
     "model_name": "Qwen/Qwen2.5-1.5B-Instruct",
@@ -94,19 +96,19 @@ curl -X POST "http://localhost:23478/train?strategy=reject" \
 ### Get status of a specific job
 
 ```bash
-curl -X GET https://yt036afigd5k.share.zrok.io/train/43c669ec-3a40-4187-9143-5221614a0d09
+curl -X GET https://train_api.quanghung20gg.site/train/[JOB_ID]
 ```
 
 ### Get all training jobs
 
 ```bash
-curl -X GET http://localhost:23478/train
+curl -X GET https://train_api.quanghung20gg.site/train
 ```
 
 ### Cancel a queued job
 
 ```bash
-curl -X DELETE http://localhost:23478/train/550e8400-e29b-41d4-a716-446655440000
+curl -X DELETE curl -X GET https://train_api.quanghung20gg.site/train/550e8400-e29b-41d4-a716-446655440000
 ```
 
 ## Queue Management
@@ -114,7 +116,7 @@ curl -X DELETE http://localhost:23478/train/550e8400-e29b-41d4-a716-446655440000
 ### Get queue status
 
 ```bash
-curl -X GET http://localhost:23478/queue
+curl -X GET curl -X GET https://train_api.quanghung20gg.site/queue
 ```
 
 ## Response Examples
