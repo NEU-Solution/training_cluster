@@ -42,6 +42,8 @@ jobs:
             source ~/anaconda3/etc/profile.d/conda.sh
             conda activate evaluate
             pkill -f "uvicorn"
+            fuser -k 23478/tcp || true
+            sleep 2
             uvicorn train_server:app --host 0.0.0.0 --port 23478 --reload
             exit
           EOF
