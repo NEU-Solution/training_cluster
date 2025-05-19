@@ -38,13 +38,12 @@ jobs:
           ssh quanghung << 'EOF'
             cd ~/Documents/new/neu_solution/training_cluster
             git pull origin main
-            tmux attach -t training_cluster || tmux new -s training_cluster
             cd ~/Documents/new/neu_solution/training_cluster/api
             source ~/anaconda3/etc/profile.d/conda.sh
             conda activate evaluate
-            pkill -f "uvicorn.*23478"
+            pkill -f 'uvicorn.*23478' || true
             sleep 2
-            uvicorn train_server:app --host 0.0.0.0 --port 23478 --reload
+            nohup uvicorn train_server:app --host 0.0.0.0 --port 23478 --reload > uvicorn.log 2>&1 &
             exit
           EOF
             
