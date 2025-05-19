@@ -36,9 +36,10 @@ jobs:
       - name: Reload API
         run: |
           ssh quanghung << 'EOF'
-            cd ./Documents/new/neu_solution/training_cluster
+            cd ~/Documents/new/neu_solution/training_cluster
             git pull origin main
             tmux attach -t training_cluster || tmux new -s training_cluster
+            cd ~/Documents/new/neu_solution/training_cluster/api
             source ~/anaconda3/etc/profile.d/conda.sh
             conda activate evaluate
             pkill -f "uvicorn.*23478"
