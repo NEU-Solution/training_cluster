@@ -10,32 +10,37 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout Repository
         uses: actions/checkout@v3
 
-      - name: Install Cloudflare CLI
+      - name: Setup SSH Key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
-          curl -fsSL https://pkg.cloudflare.com/pubkey.gpg | sudo gpg --dearmor -o /usr/share/keyrings/cloudflare-archive-keyring.gpg
-          echo "deb [signed-by=/usr/share/keyrings/cloudflare-archive-keyring.gpg] https://pkg.cloudflare.com/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare.list
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keygen -y -f ~/.ssh/id_rsa > ~/.ssh/id_rsa.pub
+          chmod 644 ~/.ssh/id_rsa.pub
+          echo -e "Host quanghung\n  HostName ${{ secrets.SERVER_HOST }}\n  User ${{ secrets.SERVER_USER }}\n  ProxyCommand cloudflared access ssh --hostname %h\n  StrictHostKeyChecking no\n  UserKnownHostsFile=/dev/null" >> ~/.ssh/config
+          chmod 600 ~/.ssh/config
+          
+      - name: Install Cloudflare Tunnel
+        run: |
           sudo apt update
-          sudo apt install -y cloudflared
+          sudo mkdir -p /usr/local/bin
+          sudo curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
+          sudo chmod +x /usr/local/bin/cloudflared
+          cloudflared --version
 
-      - name: Configure SSH
+      - name: Reload API
         run: |
-          echo "Host quanghung" >> ~/.ssh/config
-          echo "    HostName ${{ secrets.SERVER_HOST }}" >> ~/.ssh/config
-          echo "    User ${{ secrets.SERVER_USER }}" >> ~/.ssh/config
-          echo "    ProxyCommand /usr/bin/cloudflared access ssh --hostname %h" >> ~/.ssh/config
-
-      - name: SSH into Server and Restart API
-        uses: appleboy/ssh-action@v0.1.9
-        with:
-          host: quanghung
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            tmux attach -t training_cluster || tmux new -s training_cluster
-            cd training_cluster/api
+          ssh quanghung << 'EOF'
+            cd ./Documents/new/neu_solution/training_cluster
             git pull origin main
-            pkill -f "uvicorn"
-            uvicorn train_server:app --host 0.0.0.0 --port 23478 --reload
-            exit
+            # tmux attach -t training_cluster || tmux new -s training_cluster
+            # pkill -f "uvicorn"
+            # uvicorn train_server:app --host 0.0.0.0 --port 23478 --reload
+            # exit
+          EOF
+            
