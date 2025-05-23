@@ -68,8 +68,8 @@ curl -X POST https://train_api.quanghung20gg.site/train \
     "model_name": "Qwen/Qwen3-1.7B",
     "lora_name": "pretrain",
     "lora_version": "1",
-    "dataset_version": "v2.0",
-    "template": "qwen",
+    "dataset_version": "qwen3:bigquery:v2.0",
+    "template": "qwen3",
     "cutoff_len": 4096,
     "max_samples": 50000,
     "batch_size": 1,
@@ -78,7 +78,7 @@ curl -X POST https://train_api.quanghung20gg.site/train \
     "learning_rate": "2.0e-5",
     "num_epochs": 2.0,
     "tracking_backend": "mlflow",
-    "save_name": "sft-v4"
+    "save_name": "thinking2"
   }'
 ```
 
