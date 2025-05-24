@@ -3,7 +3,7 @@ import sys
 sys.path.append('..')
 
 
-from src.collecting_data import fake_etl
+from src.collecting_data import load_data
 from src.preprocess import create_training_yaml, download_model_regristry
 from src.training_cli import TrainingRunner
 from src.exp_logging import create_logger, BaseLogger
@@ -22,7 +22,7 @@ def train(
     logger: BaseLogger = None,
     template: str = "qwen",
     training_type: str = "sft",
-    learning_rate: str = '2.0e-5',
+    learning_rate: str = '2.0e-4',
     num_epochs: int = 2.0,
     save_steps: int = 1000,
     lora_name: str = None,
@@ -34,8 +34,8 @@ def train(
     **kwargs
 ):
     # Pull data from database
-    dataset_name = fake_etl(dataset_version)
-
+    dataset_name = load_data(dataset_version)
+    return
     random_suffix = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
     
     # Relative to the LLama-Factory directory
